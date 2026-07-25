@@ -1,0 +1,4 @@
+[submodule "hog2"]
+	path = hog2
+	url = https://github.com/MovingAILab/hog2.git
+	branch = PDB-refactor

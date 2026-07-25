@@ -1,0 +1,8 @@
+name: ballsort
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - cmake
+  - gxx_linux-64
+  - make

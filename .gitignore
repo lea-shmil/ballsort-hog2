@@ -1,0 +1,22 @@
+# build artifacts
+build/
+*.o
+*.a
+*.so
+
+# SLURM job output
+slurm-*.out
+logs/
+
+# results
+results/
+*.csv
+
+# machine-local tool settings
+.claude/settings.local.json
+
+# editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
