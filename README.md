@@ -49,14 +49,18 @@ Builds are **Release** (`-O3`) — this is a search-timing study, so never bench
 | --- | --- |
 | `hog2/` | HOG2 submodule (upstream, unmodified) |
 | `include/hog2_prelude.h` | Standard headers HOG2 assumes; include before any HOG2 header |
+| `include/frontier_bfs.h` | Our own frontier BFS (hog2's is unusable — see below) |
+| `include/iddfs.h` | Our own IDDFS/DFID (hog2's is unusable — see below) |
 | `environments/BallSort.h` | The domain: state, moves, goal test, hash, heuristic |
-| `src/main.cpp` | Entry point; currently the domain smoke test |
+| `src/main.cpp` | Entry point; currently the domain + algorithm-family smoke test |
 
-The domain is in place. There is not yet an instance generator, an experiment driver, or any SLURM
-job script — `./build/ballsort` runs a self-check and exits. It verifies the domain invariants
-(action legality, `ApplyAction`/`UndoAction` symmetry, ball conservation, and that the state hash is
-injective and invertible over the whole reachable set) and then confirms that BFS, Dijkstra and A\*
-return the same optimal length on several random instances.
+The domain and the full best-first search family from `CLAUDE.md` are wired up. There is not yet an
+instance generator, an experiment driver, or any SLURM job script — `./build/ballsort` runs a
+self-check and exits. It verifies the domain invariants (action legality, `ApplyAction`/`UndoAction`
+symmetry, ball conservation, and that the state hash is injective and invertible over the whole
+reachable set), then confirms that every optimal algorithm — BFS, bidirectional BFS, frontier BFS,
+IDDFS/DFID, Dijkstra, A\*, IDA\* — returns the same optimal length on several random instances, and
+that weighted A\* and greedy best-first respect their own (weaker) bounds.
 
 Only five HOG2 directories are on the include path — `search`, `generic`, `algorithms`, `utils`,
 `simulation`. The build is headless: no `gui/`, no SFML, no OpenGL.
@@ -64,6 +68,24 @@ Only five HOG2 directories are on the include path — `search`, `generic`, `alg
 Note that the algorithm headers do not live where the directory names suggest: `BFS.h`,
 `FrontierBFS.h`, `UnitCostBidirectionalBFS.h`, `DFID.h`, `IDAStar.h` and `TemplateAStar.h` are all in
 `hog2/generic/`, while `hog2/search/` holds `SearchEnvironment.h` and the PDB machinery.
+
+**Two of hog2's algorithm headers are unusable as shipped on this branch (`PDB-refactor`), and we
+don't patch vendored code (see "Working on this repo" below), so we reimplemented them instead:**
+
+- `hog2/generic/DFID.h` has its goal test commented out in both `GetPath` overloads, so a search
+  never succeeds and just raises its depth bound forever. `IDAStar` + a zero heuristic looked like a
+  clean substitute (IDDFS is, in principle, exactly IDA\* with h=0) — except `IDAStar`'s own success
+  check can't tell "goal found" apart from "root heuristic is exactly 0 and the bound was exhausted,"
+  which is every call when h≡0. Two independent bugs, so `include/iddfs.h` is our own.
+- `hog2/generic/FrontierBFS.h` never calls `GoalTest` and its `GetPath` never populates the output
+  path — it silently runs to full exhaustion of the reachable state space instead. `include/frontier_bfs.h`
+  reimplements it with proper early termination on the goal.
+
+IDDFS/DFID is also only run against the small `BallSort(3,2)` instance in the smoke test, not
+`BallSort(3,3)`. With no heuristic and a high branching factor (no color matching, so up to
+`numTubes*(numTubes-1)` moves per state), plain iterative deepening on `(3,3)` cost 161M node
+expansions and 52s wall-clock for a single instance in testing — real timing work that belongs on a
+compute node via `sbatch`/`srun`, not this login-node smoke test.
 
 ## Working on this repo
 
