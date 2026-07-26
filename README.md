@@ -49,11 +49,14 @@ Builds are **Release** (`-O3`) — this is a search-timing study, so never bench
 | --- | --- |
 | `hog2/` | HOG2 submodule (upstream, unmodified) |
 | `include/hog2_prelude.h` | Standard headers HOG2 assumes; include before any HOG2 header |
-| `src/main.cpp` | Entry point; currently a build smoke test |
+| `environments/BallSort.h` | The domain: state, moves, goal test, hash, heuristic |
+| `src/main.cpp` | Entry point; currently the domain smoke test |
 
-`environments/` is on the include path in `CMakeLists.txt` but does not exist yet — the domain
-header `BallSort.h` has not been written. Nothing is implemented so far: there is no domain, no
-search algorithms, no instance generator. The binary prints one line and exits.
+The domain is in place. There is not yet an instance generator, an experiment driver, or any SLURM
+job script — `./build/ballsort` runs a self-check and exits. It verifies the domain invariants
+(action legality, `ApplyAction`/`UndoAction` symmetry, ball conservation, and that the state hash is
+injective and invertible over the whole reachable set) and then confirms that BFS, Dijkstra and A\*
+return the same optimal length on several random instances.
 
 Only five HOG2 directories are on the include path — `search`, `generic`, `algorithms`, `utils`,
 `simulation`. The build is headless: no `gui/`, no SFML, no OpenGL.
