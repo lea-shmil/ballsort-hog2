@@ -53,6 +53,7 @@
 #include "BallSort.h"
 #include "frontier_bfs.h"
 #include "iddfs.h"
+#include "instance_gen.h"
 
 namespace {
 
@@ -69,16 +70,13 @@ void Check(bool condition, const char *what)
 
 // A random full-tube start: every colored tube full, reserve empty. Per the brief,
 // any such arrangement with exactly tubeHeight balls per color is solvable, so there
-// is no solvability check to do here.
+// is no solvability check to do here. Uses the same RandomColorSequence as
+// generate_instances, so a smoke-test instance and a generated one are built by
+// identical logic.
 template <int C, int H>
 BallSortState<C, H> RandomStart(std::mt19937 &rng)
 {
-	std::vector<int> colors;
-	for (int c = 1; c <= C; c++)
-		for (int k = 0; k < H; k++)
-			colors.push_back(c);
-	std::shuffle(colors.begin(), colors.end(), rng);
-
+	std::vector<int> colors = RandomColorSequence(C, H, rng);
 	BallSortState<C, H> s;
 	s.SetFromColorSequence(colors);
 	return s;

@@ -38,3 +38,10 @@ target_include_directories(ballsort PRIVATE
   ${HOG2_INCLUDE_DIRS}
 )
 target_compile_definitions(ballsort PRIVATE NO_OPENGL)
+
+# Instance generation is pure combinatorics -- deliberately independent of HOG2 and of
+# BallSort.h, so it gets no HOG2 include dirs and doesn't link against HOG2_SOURCES.
+add_executable(generate_instances src/generate_instances.cpp)
+target_include_directories(generate_instances PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)

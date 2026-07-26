@@ -12,6 +12,9 @@ logs/
 results/
 *.csv
 
+# generated instances: reproducible from their seed, no need to track them
+instances/
+
 # machine-local tool settings
 .claude/settings.local.json
 
