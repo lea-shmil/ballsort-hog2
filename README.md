@@ -49,8 +49,11 @@ Builds are **Release** (`-O3`) — this is a search-timing study, so never bench
 | --- | --- |
 | `hog2/` | HOG2 submodule (upstream, unmodified) |
 | `include/hog2_prelude.h` | Standard headers HOG2 assumes; include before any HOG2 header |
-| `environments/` | Domain headers — `BallSort.h` (not yet written) |
 | `src/main.cpp` | Entry point; currently a build smoke test |
+
+`environments/` is on the include path in `CMakeLists.txt` but does not exist yet — the domain
+header `BallSort.h` has not been written. Nothing is implemented so far: there is no domain, no
+search algorithms, no instance generator. The binary prints one line and exits.
 
 Only five HOG2 directories are on the include path — `search`, `generic`, `algorithms`, `utils`,
 `simulation`. The build is headless: no `gui/`, no SFML, no OpenGL.
@@ -58,6 +61,24 @@ Only five HOG2 directories are on the include path — `search`, `generic`, `alg
 Note that the algorithm headers do not live where the directory names suggest: `BFS.h`,
 `FrontierBFS.h`, `UnitCostBidirectionalBFS.h`, `DFID.h`, `IDAStar.h` and `TemplateAStar.h` are all in
 `hog2/generic/`, while `hog2/search/` holds `SearchEnvironment.h` and the PDB machinery.
+
+## Working on this repo
+
+**`git pull` does not update the submodule.** This is the easiest way to silently build against the
+wrong HOG2 revision: a plain pull leaves `hog2/` at whatever commit you first checked out, even when
+someone else has moved the pin. After every pull:
+
+```sh
+git pull
+git submodule update --init --recursive
+```
+
+**Never edit anything under `hog2/`.** It is an unmodified upstream checkout, and that is worth
+preserving: any edit there dirties the submodule and can bump the recorded pin, which silently
+changes what everyone else compiles. If a HOG2 header fails to compile because it uses a `std::` type
+it never included — gcc 15's libstdc++ no longer pulls several of them in transitively — add the
+missing header to `include/hog2_prelude.h` instead. That is precisely what that file is for. Check
+`git status` shows `hog2` clean before committing.
 
 ## Running experiments
 
