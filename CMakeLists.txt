@@ -11,6 +11,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
+# rscbt-par threads its layer expansion with std::thread.
+find_package(Threads REQUIRED)
+
 set(HOG2_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/hog2)
 
 # Exactly the five headless include dirs -- no gui/, no SFML, no OpenGL.
@@ -38,6 +41,7 @@ target_include_directories(ballsort PRIVATE
   ${HOG2_INCLUDE_DIRS}
 )
 target_compile_definitions(ballsort PRIVATE NO_OPENGL)
+target_link_libraries(ballsort PRIVATE Threads::Threads)
 
 # The experiment runner: one (algorithm, instance) pair per process, one CSV row out. One
 # pair per process is what lets the sweep be a SLURM job array.
@@ -48,6 +52,7 @@ target_include_directories(run_experiment PRIVATE
   ${HOG2_INCLUDE_DIRS}
 )
 target_compile_definitions(run_experiment PRIVATE NO_OPENGL)
+target_link_libraries(run_experiment PRIVATE Threads::Threads)
 
 # Validation for the ported DFVS lower bound and the exact solver under it.
 add_executable(dfvs_check src/test_dfvs.cpp ${HOG2_SOURCES})

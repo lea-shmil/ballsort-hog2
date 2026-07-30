@@ -33,28 +33,34 @@ ALGORITHMS = [
     # informed, with our misplaced-ball heuristic and with the paper's DFVS bound
     "astar-misplaced", "astar-paper",
     "idastar-misplaced", "idastar-paper",
-    # suboptimal: the weight sweep and its w=infinity end
-    "wastar-1.25", "wastar-1.5", "wastar-2", "wastar-3", "wastar-5", "greedy",
-    # the paper's own algorithm, faithful (symmetry reduction on) and without it
-    "rscbt", "rscbt-nosym",
+    # Suboptimal: the weight sweep and its w=infinity end. The weights sit just above 1
+    # because that is where the interesting region turned out to be -- the triage pass had
+    # w=1.25 returning the optimal length on more than half its instances, so anything
+    # coarser only measures how bad a badly-weighted search can get.
+    "wastar-1.005", "wastar-1.01", "wastar-1.05", "wastar-1.1", "greedy",
+    # The paper's own algorithm: serial with their symmetry reduction, serial without it, and
+    # with the layer expansion threaded. rscbt-par expands exactly the same nodes as rscbt by
+    # construction, so the pair isolates the parallel speedup their §6 motivates.
+    "rscbt", "rscbt-nosym", "rscbt-par",
 ]
 
-# Highest difficulty tier each algorithm is attempted on by default. The tiers come from the
-# reachable state count and are documented in the README; the point of the cap is that a
-# 60-minute timeout is expensive to buy 8000 times over for runs whose outcome is already
-# known. --all removes the cap and attempts everything.
+# Workers per algorithm. Everything except rscbt-par is serial, so only rscbt-par asks for
+# more than one core -- and it gets its own array with a matching --cpus-per-task, rather
+# than the whole sweep reserving cores it would not use.
+PARALLEL_THREADS = 16
+THREADS = {"rscbt-par": PARALLEL_THREADS}
+
+# Difficulty tiers, from the reachable state count, documented in the README.
 #
-# Skipped pairs are written to the task list as comments, so "not attempted" stays visible
-# in the record rather than looking like missing data.
+# Every algorithm is now attempted on every tier. Earlier runs capped the exhaustive searches
+# at tier B and IDDFS at tier A to avoid buying thousands of 60-minute timeouts, but a cap
+# means the reach of those algorithms is *assumed* rather than measured -- and the triage pass
+# showed the assumption was already wrong in one direction, with A*+misplaced clearing 97% of
+# tier C. Timeouts cost cluster time; assumed results cost correctness. MAX_TIER stays here,
+# empty, so reinstating a cap is a one-line change rather than a rewrite.
 TIER_ORDER = {"trivial": 0, "A": 1, "B": 2, "C": 3, "D": 4}
-MAX_TIER = {
-    "iddfs": "A",            # no closed list; 161M expansions on 3x4 already
-    "bfs": "B",
-    "bibfs": "B",
-    "frontier-bfs": "B",
-    "dijkstra": "B",
-}
-DEFAULT_MAX_TIER = "D"       # informed algorithms and rscbt are attempted everywhere
+MAX_TIER = {}
+DEFAULT_MAX_TIER = "D"
 
 
 def row_path(rowdir, algorithm, instance, seed):
@@ -138,10 +144,10 @@ def main():
                                                            instance, seed):
                         reused += 1
                         continue
-                    rows.append((algorithm, instance, seed))
+                    rows.append((algorithm, instance, seed, THREADS.get(algorithm, 1)))
 
     with open(args.tasklist, "w") as f:
-        f.write("# algorithm\tinstance\tseed_label\n")
+        f.write("# algorithm\tinstance\tseed_label\tthreads\n")
         f.write(f"# grid={args.grid} seeds={','.join(seeds)} count={args.count}\n")
         f.write(f"# {len(rows)} tasks, {len(skipped)} (algorithm, instance) pairs "
                 f"skipped by tier cap\n")
@@ -156,8 +162,8 @@ def main():
         for (algorithm, cap), cells in sorted(by_algorithm.items()):
             f.write(f"# not attempted: {algorithm} capped at tier {cap}, "
                     f"skipping {' '.join(sorted(cells))}\n")
-        for algorithm, instance, seed in rows:
-            f.write(f"{algorithm}\t{instance}\t{seed}\n")
+        for algorithm, instance, seed, threads in rows:
+            f.write(f"{algorithm}\t{instance}\t{seed}\t{threads}\n")
 
     print(f"wrote {len(rows)} tasks to {args.tasklist}")
     print(f"seeds: {', '.join(seeds)}  grid: {args.grid}  instances/cell/seed: {args.count}")

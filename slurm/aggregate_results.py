@@ -43,12 +43,12 @@ from collections import defaultdict
 OPTIMAL_ALGORITHMS = {
     "bfs", "bibfs", "frontier-bfs", "iddfs", "dijkstra",
     "astar-misplaced", "astar-paper", "idastar-misplaced", "idastar-paper",
-    "rscbt", "rscbt-nosym",
+    "rscbt", "rscbt-nosym", "rscbt-par",
 }
 
 NUMERIC = ["solution_length", "nodes_expanded", "nodes_generated",
            "max_elements_in_memory", "runtime_seconds", "peak_rss_kb",
-           "iterations", "root_lower_bound"]
+           "iterations", "root_lower_bound", "threads"]
 
 
 def load_rows(rowdir):
@@ -63,8 +63,8 @@ def load_rows(rowdir):
             if line.startswith("algorithm,"):
                 continue
             parts = line.split(",")
-            if len(parts) != 17:
-                print(f"warning: {path}: expected 17 fields, got {len(parts)} -- skipped",
+            if len(parts) != 18:
+                print(f"warning: {path}: expected 18 fields, got {len(parts)} -- skipped",
                       file=sys.stderr)
                 continue
             row = {
@@ -76,7 +76,7 @@ def load_rows(rowdir):
                 "max_elements_in_memory": int(parts[10]),
                 "runtime_seconds": float(parts[11]), "peak_rss_kb": int(parts[12]),
                 "iterations": int(parts[13]), "root_lower_bound": int(parts[14]),
-                "node": parts[15], "cpu_model": parts[16],
+                "threads": int(parts[15]), "node": parts[16], "cpu_model": parts[17],
             }
             rows.append(row)
     return rows

@@ -53,6 +53,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <numeric>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -146,6 +147,7 @@ struct RSCBTResult {
 									// the paper's Figure 6c metric
 	int iterations = 0;             // how many values of mu were tried
 	bool exhausted = false;         // a mu round proved FALSE (no solution within it)
+	int threads = 1;                // workers used for the layer expansion
 };
 
 /**
@@ -156,9 +158,9 @@ struct RSCBTResult {
  */
 template <int numColors, int tubeHeight>
 int RSCBTDecide(const BallSort<numColors, tubeHeight> &env,
-				const BallSortDFVSHeuristic<numColors, tubeHeight> &bound,
+				std::vector<BallSortDFVSHeuristic<numColors, tubeHeight>> &bounds,
 				const BallSortState<numColors, tubeHeight> &start,
-				int mu, bool symmetryReduction, RSCBTResult &result)
+				int mu, bool symmetryReduction, int threads, RSCBTResult &result)
 {
 	typedef BallSortState<numColors, tubeHeight> State;
 	const State goal = env.GetGoalState();
@@ -187,40 +189,109 @@ int RSCBTDecide(const BallSort<numColors, tubeHeight> &env,
 		// to expand next round, and the hashes to do the set algebra.
 		std::vector<State> inBoundStates, outOfBoundStates;
 
-		for (const State &s : currentStates)
-		{
-			result.nodesExpanded++;
+		// ---- expand the layer, optionally across threads ----
+		//
+		// This is the part their implementation parallelizes, and their §6 says the whole
+		// reason for breadth-first rather than best-first order is that it parallelizes
+		// easily: every configuration in a layer is independent of the others.
+		//
+		// Determinism is a design requirement here, not a nicety. Each thread takes one
+		// *contiguous* slice of the layer and fills thread-local successor lists; the merge
+		// then walks the slices in order, so insertion order -- and therefore the whole
+		// layer, the pruning and every counter -- is exactly what one thread would produce.
+		// rscbt-par and rscbt differ in wall-clock alone, which is what makes them worth
+		// comparing.
+		//
+		// Each thread also gets its own lower-bound object, because the DFVS bound memoizes
+		// into an unordered_map that is not safe to share.
+		const size_t layerSize = currentStates.size();
+		const int workers = std::max(1, std::min<int>(threads, static_cast<int>(layerSize)));
 
-			const int lb = static_cast<int>(bound.HCost(s, goal));
-			if (lb == 0)
-				return i;                       // final configuration, reached in i moves
-			const bool pruned = (lb+i > mu);
+		struct Slice {
+			std::vector<std::pair<uint64_t, State>> inBound, outOfBound;
+			uint64_t generated = 0;
+			bool foundGoal = false;
+		};
+		std::vector<Slice> slices(workers);
 
-			env.GetActions(s, actions);
-			for (const auto &a : actions)
+		auto expandRange = [&](int worker, size_t from, size_t to) {
+			Slice &slice = slices[worker];
+			auto &localBound = bounds[worker];
+			std::vector<BallSortMove> localActions;
+			for (size_t k = from; k < to; k++)
 			{
-				State raw = s;
-				env.ApplyAction(raw, a);
-				result.nodesGenerated++;
-
-				// Collapse to the class representative before the layer set algebra, so a
-				// layer holds one member per equivalence class rather than all of them.
-				const State next = canonical(raw);
-				const uint64_t key = env.GetStateHash(next);
-				if (current.count(key) || previous.count(key))
-					continue;                   // one of the two layers we still hold
-
-				if (pruned)
+				const State &s = currentStates[k];
+				const int lb = static_cast<int>(localBound.HCost(s, goal));
+				if (lb == 0)
 				{
-					if (outOfBound.insert(key).second)
-						outOfBoundStates.push_back(next);
+					// A final configuration in this layer: the answer is i. Keep scanning
+					// rather than bailing out, so the counters do not depend on which slice
+					// happened to contain it.
+					slice.foundGoal = true;
+					continue;
 				}
-				else
+				const bool pruned = (lb+i > mu);
+
+				env.GetActions(s, localActions);
+				for (const auto &a : localActions)
 				{
-					if (inBound.insert(key).second)
-						inBoundStates.push_back(next);
+					State raw = s;
+					env.ApplyAction(raw, a);
+					slice.generated++;
+
+					// Collapse to the class representative before the layer set algebra, so
+					// a layer holds one member per equivalence class rather than all of them.
+					const State next = canonical(raw);
+					const uint64_t key = env.GetStateHash(next);
+					if (current.count(key) || previous.count(key))
+						continue;               // one of the two layers we still hold
+
+					if (pruned)
+						slice.outOfBound.push_back({key, next});
+					else
+						slice.inBound.push_back({key, next});
 				}
 			}
+		};
+
+		if (workers == 1)
+		{
+			expandRange(0, 0, layerSize);
+		}
+		else
+		{
+			std::vector<std::thread> pool;
+			pool.reserve(workers);
+			const size_t chunk = (layerSize+workers-1)/workers;
+			for (int w = 0; w < workers; w++)
+			{
+				const size_t from = std::min(layerSize, static_cast<size_t>(w)*chunk);
+				const size_t to = std::min(layerSize, from+chunk);
+				pool.emplace_back(expandRange, w, from, to);
+			}
+			for (auto &t : pool)
+				t.join();
+		}
+
+		result.nodesExpanded += layerSize;
+		for (const Slice &slice : slices)
+			result.nodesGenerated += slice.generated;
+
+		// Their lines 8-9: a zero lower bound anywhere in this layer means a final
+		// configuration has been reached in i moves.
+		for (const Slice &slice : slices)
+			if (slice.foundGoal)
+				return i;
+
+		// Merge in slice order, which reproduces single-threaded insertion order exactly.
+		for (const Slice &slice : slices)
+		{
+			for (const auto &entry : slice.outOfBound)
+				if (outOfBound.insert(entry.first).second)
+					outOfBoundStates.push_back(entry.second);
+			for (const auto &entry : slice.inBound)
+				if (inBound.insert(entry.first).second)
+					inBoundStates.push_back(entry.second);
 		}
 
 		// level_{i+1} = inBound \ outOfBound. The knowledge that a configuration is
@@ -263,13 +334,21 @@ int RSCBTDecide(const BallSort<numColors, tubeHeight> &env,
 template <int numColors, int tubeHeight>
 RSCBTResult RSCBTSolve(const BallSort<numColors, tubeHeight> &env,
 					   const BallSortState<numColors, tubeHeight> &start,
-					   bool symmetryReduction = true, int maxMu = 1000)
+					   bool symmetryReduction = true, int threads = 1, int maxMu = 1000)
 {
 	RSCBTResult result;
-	BallSortDFVSHeuristic<numColors, tubeHeight> bound(&env);
+	result.threads = std::max(1, threads);
+
+	// One lower-bound object per worker: the DFVS bound memoizes into an unordered_map, so
+	// sharing one across threads would be a data race. The cost is a warm-up per thread, not
+	// a correctness difference -- the bound is a pure function of the state.
+	std::vector<BallSortDFVSHeuristic<numColors, tubeHeight>> bounds;
+	bounds.reserve(result.threads);
+	for (int t = 0; t < result.threads; t++)
+		bounds.emplace_back(&env);
 	const auto goal = env.GetGoalState();
 
-	int mu = static_cast<int>(bound.HCost(start, goal));
+	int mu = static_cast<int>(bounds[0].HCost(start, goal));
 	if (mu == 0)
 	{
 		result.solutionLength = 0;
@@ -280,8 +359,9 @@ RSCBTResult RSCBTSolve(const BallSort<numColors, tubeHeight> &env,
 	{
 		result.iterations++;
 		result.exhausted = false;
-		int found = RSCBTDecide<numColors, tubeHeight>(env, bound, start, mu,
-													  symmetryReduction, result);
+		int found = RSCBTDecide<numColors, tubeHeight>(env, bounds, start, mu,
+													  symmetryReduction, result.threads,
+													  result);
 		if (found >= 0)
 		{
 			result.solutionLength = found;

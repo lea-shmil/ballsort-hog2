@@ -9,13 +9,16 @@
 #   bash slurm/submit_sweep.sh [TASKLIST] [CONCURRENCY]
 #
 #   TASKLIST     default results/tasks.tsv (from slurm/build_tasklist.py)
-#   CONCURRENCY  max simultaneously running tasks per chunk, default 100. Raise it if the
-#                partition is quiet, lower it to be a better neighbour.
+#   CONCURRENCY  max *cores* in flight, default 100. Per-array concurrency is derived from
+#                it as CONCURRENCY/threads, so a 16-thread partition runs fewer tasks at
+#                once rather than 16x the cores. The cpu128 group has 12 x 128 = 1536 cores
+#                in total, so 100 is a polite neighbour; raise it if the partition is quiet.
 
 set -euo pipefail
 
 TASKLIST="${1:-results/tasks.tsv}"
 CONCURRENCY="${2:-100}"
+BATCH="${BATCH:-12}"
 CHUNK=1000
 
 # Optional per-account settings, chiefly an email address for job notifications. Gitignored,
@@ -50,35 +53,67 @@ fi
 
 mkdir -p logs/sweep results/rows
 
-CHUNKS=$(( (TOTAL + CHUNK - 1) / CHUNK ))
-echo "$TOTAL tasks, $CHUNKS chunk(s) of up to $CHUNK, concurrency $CONCURRENCY per chunk"
+echo "$TOTAL tasks total"
 if [ -n "$MAIL_USER" ]; then
-	echo "email on $MAIL_TYPE to $MAIL_USER -- one message per chunk, so $CHUNKS in total"
+	echo "email on $MAIL_TYPE to $MAIL_USER -- one message per chunk"
 else
 	echo "no email (create slurm/local.conf from slurm/local.conf.example to enable)"
 fi
 
+# Split by worker count. Every algorithm but rscbt-par is serial, so reserving 16 cores for
+# the whole sweep would idle fifteen of them on almost every task. One array per distinct
+# thread count, each with a matching --cpus-per-task, keeps the allocation honest.
+THREAD_COUNTS=$(awk -F'\t' '!/^#/ && NF>=4 {print $4}' "$TASKLIST" | sort -un)
+if [ -z "$THREAD_COUNTS" ]; then
+	THREAD_COUNTS=1   # task list predates the threads column
+fi
+
 DEPENDENCY=""
-for (( c=0; c<CHUNKS; c++ )); do
-	OFFSET=$(( c * CHUNK ))
-	REMAINING=$(( TOTAL - OFFSET ))
-	LAST=$(( REMAINING < CHUNK ? REMAINING - 1 : CHUNK - 1 ))
+for T in $THREAD_COUNTS; do
+	PART="${TASKLIST%.tsv}-t${T}.tsv"
+	awk -F'\t' -v t="$T" '!/^#/ && NF>=4 && $4==t' "$TASKLIST" > "$PART"
+	PART_TOTAL=$(grep -vc '^#' "$PART" || true)
+	[ "$PART_TOTAL" -eq 0 ] && continue
 
-	# Chain chunk c+1 behind chunk c ("afterany", so one failed task does not stall the rest).
-	DEP_ARG=()
-	if [ -n "$DEPENDENCY" ]; then
-		DEP_ARG=(--dependency="afterany:$DEPENDENCY")
+	# Array tasks needed, given each one runs BATCH lines. Batching is what keeps the sweep
+	# inside the cpu-part QOS ceiling of 2000 submitted jobs per user -- one job per run would
+	# be 11,220 of them. See the header of experiment_sweep.sbatch.
+	PART_ARRAY_TASKS=$(( (PART_TOTAL + BATCH - 1) / BATCH ))
+	PART_CHUNKS=$(( (PART_ARRAY_TASKS + CHUNK - 1) / CHUNK ))
+
+	# CONCURRENCY counts cores, not tasks: 100 single-threaded tasks and 6 sixteen-threaded
+	# ones both put about 100 cores in flight. Without this, a 16-thread array at concurrency
+	# 100 would ask for 1600 cores and monopolize a group that only has 1536.
+	PART_CONCURRENCY=$(( CONCURRENCY / T ))
+	if [ "$PART_CONCURRENCY" -lt 1 ]; then
+		PART_CONCURRENCY=1
 	fi
+	echo "  ${T} thread(s): $PART_TOTAL runs -> $PART_ARRAY_TASKS array task(s) of $BATCH, $PART_CHUNKS chunk(s), $PART_CONCURRENCY at a time (~$(( PART_CONCURRENCY * T )) cores) -> $PART"
 
-	JOBID=$(sbatch --parsable \
-		"${DEP_ARG[@]}" \
-		"${MAIL_ARGS[@]}" \
-		--array="0-${LAST}%${CONCURRENCY}" \
-		--export=ALL,TASKLIST="$TASKLIST",OFFSET="$OFFSET" \
-		slurm/experiment_sweep.sbatch)
+	for (( c=0; c<PART_CHUNKS; c++ )); do
+		# OFFSET is in task-list lines; the array index then advances in units of BATCH.
+		OFFSET=$(( c * CHUNK * BATCH ))
+		REMAINING=$(( PART_ARRAY_TASKS - c * CHUNK ))
+		LAST=$(( REMAINING < CHUNK ? REMAINING - 1 : CHUNK - 1 ))
 
-	echo "chunk $c: offset $OFFSET, indices 0-$LAST -> job $JOBID"
-	DEPENDENCY="$JOBID"
+		# Chain each chunk behind the previous ("afterany", so one failed task does not stall
+		# the rest). Chaining across partitions too, so the cluster sees one sweep at a time.
+		DEP_ARG=()
+		if [ -n "$DEPENDENCY" ]; then
+			DEP_ARG=(--dependency="afterany:$DEPENDENCY")
+		fi
+
+		JOBID=$(sbatch --parsable \
+			"${DEP_ARG[@]}" \
+			"${MAIL_ARGS[@]}" \
+			--cpus-per-task="$T" \
+			--array="0-${LAST}%${PART_CONCURRENCY}" \
+			--export=ALL,TASKLIST="$PART",OFFSET="$OFFSET",THREADS="$T",BATCH="$BATCH" \
+			slurm/experiment_sweep.sbatch)
+
+		echo "    chunk $c: line offset $OFFSET, array 0-$LAST, ${T} cpu(s) -> job $JOBID"
+		DEPENDENCY="$JOBID"
+	done
 done
 
 echo

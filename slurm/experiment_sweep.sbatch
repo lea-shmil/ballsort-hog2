@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=32G
-#SBATCH --time=01:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=logs/sweep/%A_%a.out
 #SBATCH --error=logs/sweep/%A_%a.out
 #
@@ -31,8 +31,18 @@
 # paper's empty Figure 6 boxes are -- rather than a lost run. CLAUDE.md's "single-threaded
 # per task, parallelize with job arrays" is exactly this shape.
 #
-# Do not sbatch this directly: MaxArraySize on this cluster is 1001 and the sweep is larger,
-# so submission is chunked. Use:
+# **Each array task runs a batch of consecutive task-list lines**, not just one. That is
+# forced by the cluster's QOS: `cpu-part` allows a user at most 2000 submitted jobs, and every
+# array task counts as one, so an 11,220-run sweep cannot be 11,220 jobs. With BATCH lines per
+# task the whole sweep is a few hundred jobs, comfortably inside both that limit and the
+# MaxArraySize of 1001.
+#
+# Batching does not weaken the per-run limits, which is the point: each run inside the batch
+# gets its own RUN_TIMEOUT via timeout(1), so one pathological instance is killed on its own
+# rather than consuming the batch's budget. A killed run leaves no row, which is exactly how a
+# timeout was already recorded. The task's own --time has to cover BATCH runs, hence 12h.
+#
+# Do not sbatch this directly. Use:
 #
 #   ./build/generate_instances --grid core --outdir instances   # or let the next line do it
 #   slurm/build_tasklist.py --grid core --seeds 20250726,20250727,20250728
@@ -50,7 +60,11 @@ OFFSET="${OFFSET:-0}"
 TIMING_REPEATS="${TIMING_REPEATS:-3}"
 ROWDIR="${ROWDIR:-results/rows}"
 
-LINE_NUMBER=$((OFFSET + SLURM_ARRAY_TASK_ID + 1))
+BATCH="${BATCH:-12}"
+RUN_TIMEOUT="${RUN_TIMEOUT:-3600}"
+
+# This task owns lines [FIRST, FIRST+BATCH) of the task list, 1-based.
+FIRST=$((OFFSET + SLURM_ARRAY_TASK_ID*BATCH + 1))
 
 # Fail loudly if the task list is not visible from this node. An unreadable task list makes
 # every array task find no work and exit 0, which looks exactly like a sweep that ran and
@@ -65,46 +79,66 @@ fi
 
 TOTAL_TASKS=$(grep -vc '^#' "$TASKLIST")
 
-# Skip comment lines when numbering, so line N is task N regardless of the header.
-TASK=$(grep -v '^#' "$TASKLIST" | sed -n "${LINE_NUMBER}p")
-if [ -z "$TASK" ]; then
-	# Genuinely past the end: the last chunk's array is padded to a round size.
-	echo "no task at line $LINE_NUMBER of $TOTAL_TASKS (offset $OFFSET + index $SLURM_ARRAY_TASK_ID) -- past the end, nothing to do"
-	exit 0
-fi
-
-ALGORITHM=$(printf '%s' "$TASK" | cut -f1)
-INSTANCE=$(printf '%s' "$TASK" | cut -f2)
-SEED_LABEL=$(printf '%s' "$TASK" | cut -f3)
-
-echo "task $SLURM_ARRAY_TASK_ID (line $LINE_NUMBER): $ALGORITHM on $INSTANCE (seed $SEED_LABEL)"
-echo "node: $(hostname)  limits: ${SLURM_MEM_PER_NODE:-?} MB / $(squeue -h -j "$SLURM_JOB_ID" -o %l 2>/dev/null)"
+echo "array task $SLURM_ARRAY_TASK_ID: lines $FIRST..$((FIRST+BATCH-1)) of $TOTAL_TASKS in $TASKLIST"
+echo "node: $(hostname)  ${SLURM_CPUS_PER_TASK:-1} cpu(s), ${SLURM_MEM_PER_NODE:-?} MB, ${RUN_TIMEOUT}s per run"
 
 source /storage/modules/packages/anaconda/etc/profile.d/conda.sh
 conda activate ballsort
 
 mkdir -p "$ROWDIR"
 
-# One file per row rather than appending to a shared CSV: hundreds of concurrent array tasks
-# appending to one file will interleave and corrupt lines. aggregate_results.py concatenates.
-SAFE_INSTANCE=$(printf '%s' "$INSTANCE" | tr '/' '_')
-ROW="$ROWDIR/${ALGORITHM}__${SAFE_INSTANCE}__seed${SEED_LABEL}.csv"
+DONE=0
+TIMED_OUT=0
+FAILED=0
 
-./build/run_experiment \
-	--algorithm "$ALGORITHM" \
-	--instance "$INSTANCE" \
-	--seed-label "$SEED_LABEL" \
-	--timing-repeats "$TIMING_REPEATS" \
-	> "$ROW"
-STATUS=$?
+for (( n=0; n<BATCH; n++ )); do
+	LINE_NUMBER=$((FIRST + n))
+	# Skip comment lines when numbering, so line N is task N regardless of the header.
+	TASK=$(grep -v '^#' "$TASKLIST" | sed -n "${LINE_NUMBER}p")
+	if [ -z "$TASK" ]; then
+		break          # past the end: the last array task is a short batch
+	fi
 
-if [ $STATUS -ne 0 ]; then
-	# A non-zero exit here is a real failure (bad arguments, unparsable instance). A timeout
-	# or an out-of-memory kill never reaches this line -- SLURM kills the task, the row file
-	# is left empty or absent, and aggregate_results.py records that as a timeout.
-	echo "run_experiment failed with status $STATUS"
-	rm -f "$ROW"
-	exit $STATUS
-fi
+	ALGORITHM=$(printf '%s' "$TASK" | cut -f1)
+	INSTANCE=$(printf '%s' "$TASK" | cut -f2)
+	SEED_LABEL=$(printf '%s' "$TASK" | cut -f3)
+	# Workers for rscbt-par; every other algorithm is serial and ignores this. submit_sweep.sh
+	# gives each thread-count partition its own array with a matching --cpus-per-task.
+	TASK_THREADS=$(printf '%s' "$TASK" | cut -f4)
+	TASK_THREADS="${TASK_THREADS:-${THREADS:-1}}"
 
-cat "$ROW"
+	# One file per row rather than appending to a shared CSV: many concurrent array tasks
+	# appending to one file would interleave and corrupt lines. aggregate_results.py concatenates.
+	SAFE_INSTANCE=$(printf '%s' "$INSTANCE" | tr '/' '_')
+	ROW="$ROWDIR/${ALGORITHM}__${SAFE_INSTANCE}__seed${SEED_LABEL}.csv"
+
+	# Each run is capped on its own, so one pathological instance cannot eat the batch's
+	# budget and starve the runs queued behind it in this task.
+	timeout --signal=KILL "$RUN_TIMEOUT" ./build/run_experiment \
+		--algorithm "$ALGORITHM" \
+		--instance "$INSTANCE" \
+		--seed-label "$SEED_LABEL" \
+		--timing-repeats "$TIMING_REPEATS" \
+		--threads "$TASK_THREADS" \
+		> "$ROW"
+	STATUS=$?
+
+	if [ $STATUS -eq 0 ]; then
+		DONE=$((DONE+1))
+		cat "$ROW"
+	else
+		# 124/137 are timeout(1) killing the run; anything else is a real failure (bad
+		# arguments, unparsable instance). Either way no row survives, and a missing row is
+		# exactly how aggregate_results.py already records a run that did not finish.
+		rm -f "$ROW"
+		if [ $STATUS -eq 124 ] || [ $STATUS -eq 137 ]; then
+			TIMED_OUT=$((TIMED_OUT+1))
+			echo "TIMEOUT after ${RUN_TIMEOUT}s: $ALGORITHM on $INSTANCE (seed $SEED_LABEL)"
+		else
+			FAILED=$((FAILED+1))
+			echo "FAILED (status $STATUS): $ALGORITHM on $INSTANCE (seed $SEED_LABEL)"
+		fi
+	fi
+done
+
+echo "batch finished: $DONE completed, $TIMED_OUT timed out, $FAILED failed"

@@ -73,6 +73,7 @@ struct RunRecord {
 	long peakRssKb = 0;
 	int iterations = 0;
 	int rootLowerBound = -1;
+	int threads = 1;
 
 	// Where this ran. Recorded because runtime_seconds is only comparable across rows that
 	// ran on the same hardware; the sweep pins itself to one machine type, and these two
@@ -157,7 +158,8 @@ double Median(std::vector<double> values)
 // ever sees one algorithm.
 
 template <int C, int H>
-bool RunOne(const std::string &algorithm, const BallSortState<C, H> &start, RunRecord &out)
+bool RunOne(const std::string &algorithm, const BallSortState<C, H> &start,
+			int threads, RunRecord &out)
 {
 	typedef BallSortState<C, H> State;
 	BallSort<C, H> env;
@@ -254,12 +256,19 @@ bool RunOne(const std::string &algorithm, const BallSortState<C, H> &start, RunR
 		out.nodesExpanded = search.GetNodesExpanded();
 		out.nodesGenerated = search.GetNodesTouched();
 	}
-	else if (algorithm == "rscbt" || algorithm == "rscbt-nosym")
+	else if (algorithm == "rscbt" || algorithm == "rscbt-nosym" || algorithm == "rscbt-par")
 	{
-		// Their algorithm. rscbt is the faithful configuration, with the color-permutation
-		// symmetry reduction of their §6; rscbt-nosym turns it off so the node counts are
-		// comparable with the algorithms that search the raw state space.
-		auto r = RSCBTSolve<C, H>(env, start, algorithm == "rscbt");
+		// Their algorithm. rscbt is the faithful serial configuration, with the
+		// color-permutation symmetry reduction of their §6; rscbt-nosym turns that off so the
+		// node counts are comparable with the algorithms searching the raw state space;
+		// rscbt-par is rscbt with the layer expansion threaded, which is the parallelism their
+		// §6 gives as the reason for preferring breadth-first over best-first order.
+		//
+		// rscbt-par expands exactly the same nodes as rscbt by construction (see rscbt.h), so
+		// the pair isolates the speedup: identical work, different wall-clock.
+		const int workers = (algorithm == "rscbt-par") ? threads : 1;
+		auto r = RSCBTSolve<C, H>(env, start, algorithm != "rscbt-nosym", workers);
+		out.threads = r.threads;
 		out.solutionLength = r.solutionLength;
 		out.nodesExpanded = r.nodesExpanded;
 		out.nodesGenerated = r.nodesGenerated;
@@ -290,14 +299,14 @@ bool RunOne(const std::string &algorithm, const BallSortState<C, H> &start, RunR
 	X(8, 2)
 
 bool Dispatch(const std::string &algorithm, const std::vector<int> &colors,
-			  int numColors, int tubeHeight, RunRecord &out)
+			  int numColors, int tubeHeight, int threads, RunRecord &out)
 {
 #define BALLSORT_TRY(C, H) \
 	if (numColors == (C) && tubeHeight == (H)) \
 	{ \
 		BallSortState<C, H> start; \
 		start.SetFromColorSequence(colors); \
-		return RunOne<C, H>(algorithm, start, out); \
+		return RunOne<C, H>(algorithm, start, threads, out); \
 	}
 	BALLSORT_CELLS(BALLSORT_TRY)
 #undef BALLSORT_TRY
@@ -312,17 +321,17 @@ void PrintHeader()
 {
 	printf("algorithm,cell,colors,height,instance,seed_label,solved,solution_length,"
 		   "nodes_expanded,nodes_generated,max_elements_in_memory,runtime_seconds,"
-		   "peak_rss_kb,iterations,root_lower_bound,node,cpu_model\n");
+		   "peak_rss_kb,iterations,root_lower_bound,threads,node,cpu_model\n");
 }
 
 void PrintRow(const RunRecord &r)
 {
-	printf("%s,%s,%d,%d,%d,%s,%d,%d,%llu,%llu,%llu,%.6f,%ld,%d,%d,%s,%s\n",
+	printf("%s,%s,%d,%d,%d,%s,%d,%d,%llu,%llu,%llu,%.6f,%ld,%d,%d,%d,%s,%s\n",
 		   r.algorithm.c_str(), r.cell.c_str(), r.numColors, r.tubeHeight,
 		   r.instanceIndex, r.seedLabel.c_str(), r.solved ? 1 : 0, r.solutionLength,
 		   (unsigned long long)r.nodesExpanded, (unsigned long long)r.nodesGenerated,
 		   (unsigned long long)r.maxElementsInMemory, r.runtimeSeconds,
-		   r.peakRssKb, r.iterations, r.rootLowerBound,
+		   r.peakRssKb, r.iterations, r.rootLowerBound, r.threads,
 		   r.node.c_str(), r.cpuModel.c_str());
 }
 
@@ -336,12 +345,14 @@ void PrintUsage(const char *prog)
 			"  astar-misplaced, idastar-misplaced          with BallSort::HCost\n"
 			"  astar-paper, idastar-paper                  with the paper's DFVS bound\n"
 			"  wastar-<w>, greedy                          suboptimal, e.g. wastar-1.5\n"
-			"  rscbt, rscbt-nosym                          the paper's own algorithm\n"
+			"  rscbt, rscbt-nosym, rscbt-par               the paper's own algorithm\n"
 			"\n"
 			"options:\n"
 			"  --timing-repeats R  repeat the run R times and keep the median wall-clock\n"
 			"                      (default 3). Node counts are deterministic and are taken\n"
 			"                      from the first run.\n"
+			"  --threads N         workers for rscbt-par's layer expansion (default 1).\n"
+			"                      Ignored by every other algorithm, all of which are serial.\n"
 			"  --seed-label S      tag the row with the instance-set seed it came from\n"
 			"  --header            print the CSV header before the row\n",
 			prog);
@@ -353,6 +364,7 @@ int main(int argc, char **argv)
 {
 	std::string algorithm, instancePath, seedLabel;
 	int timingRepeats = 3;
+	int threads = 1;
 	bool wantHeader = false;
 
 	for (int i = 1; i < argc; i++)
@@ -372,6 +384,7 @@ int main(int argc, char **argv)
 		else if (arg == "--seed-label") seedLabel = nextArg("--seed-label");
 		else if (arg == "--timing-repeats" || arg == "--repeats")
 			timingRepeats = atoi(nextArg("--timing-repeats"));
+		else if (arg == "--threads")   threads = atoi(nextArg("--threads"));
 		else if (arg == "--header")    wantHeader = true;
 		else if (arg == "-h" || arg == "--help") { PrintUsage(argv[0]); return 0; }
 		else
@@ -390,6 +403,8 @@ int main(int argc, char **argv)
 	}
 	if (timingRepeats < 1)
 		timingRepeats = 1;
+	if (threads < 1)
+		threads = 1;
 
 	std::ifstream in(instancePath);
 	if (!in)
@@ -412,6 +427,7 @@ int main(int argc, char **argv)
 	record.numColors = numColors;
 	record.tubeHeight = tubeHeight;
 	record.seedLabel = seedLabel;
+	record.threads = 1;
 	// Instance index off the file name: ..._<index>.in, matching the generator's naming.
 	{
 		size_t underscore = instancePath.rfind('_');
@@ -425,7 +441,7 @@ int main(int argc, char **argv)
 	{
 		RunRecord attempt = record;
 		double t0 = NowSeconds();
-		if (!Dispatch(algorithm, colors, numColors, tubeHeight, attempt))
+		if (!Dispatch(algorithm, colors, numColors, tubeHeight, threads, attempt))
 		{
 			fprintf(stderr, "error: unknown algorithm '%s' or uninstantiated cell\n", algorithm.c_str());
 			return 2;
