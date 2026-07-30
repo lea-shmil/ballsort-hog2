@@ -39,6 +39,8 @@
 #include <cstdio>
 #include <numeric>
 #include <random>
+#include <sstream>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -51,9 +53,11 @@
 #include "TemplateAStar.h"
 
 #include "BallSort.h"
+#include "dfvs_bound.h"
 #include "frontier_bfs.h"
 #include "iddfs.h"
 #include "instance_gen.h"
+#include "rscbt.h"
 
 namespace {
 
@@ -211,12 +215,30 @@ int CheckOptimalAgreement(BallSort<C, H> &env, const BallSortState<C, H> &start,
 	int idaStarLength = static_cast<int>(path.size())-1;
 	uint64_t idaStarExpanded = idaStar.GetNodesExpanded();
 
+	// A* driven by the paper's own DFVS lower bound rather than BallSort::HCost. Optimal
+	// for the same reason plain A* is: dfvs_check verifies the bound is admissible and
+	// consistent, so no reopening is needed.
+	BallSortDFVSHeuristic<C, H> paperBound(&env);
+	TemplateAStar<State, BallSortMove, BallSort<C, H>> astarDFVS;
+	astarDFVS.SetHeuristic(&paperBound);
+	astarDFVS.GetPath(&env, start, goal, path);
+	int astarDFVSLength = static_cast<int>(path.size())-1;
+	uint64_t astarDFVSExpanded = astarDFVS.GetNodesExpanded();
+
+	// RSCBT: the algorithm of Althaus et al. themselves (include/rscbt.h) -- breadth-first
+	// layers with their DFVS bound filtering against an upper bound. An optimal algorithm,
+	// so it belongs under the same cross-check as the rest.
+	auto rscbt = RSCBTSolve<C, H>(env, start);
+
 	printf("  instance %d: optimal=%d\n", instance, bfsLength);
-	printf("    expanded: BFS=%llu biBFS=%llu frontierBFS=%llu Dijkstra=%llu A*=%llu IDA*=%llu\n",
+	printf("    expanded: BFS=%llu biBFS=%llu frontierBFS=%llu Dijkstra=%llu A*=%llu "
+		   "A*(DFVS)=%llu IDA*=%llu RSCBT=%llu\n",
 		   (unsigned long long)bfsExpanded, (unsigned long long)biBfsExpanded,
 		   (unsigned long long)frontierExpanded,
 		   (unsigned long long)dijkstraExpanded, (unsigned long long)astarExpanded,
-		   (unsigned long long)idaStarExpanded);
+		   (unsigned long long)astarDFVSExpanded,
+		   (unsigned long long)idaStarExpanded,
+		   (unsigned long long)rscbt.nodesExpanded);
 
 	Check(bfsLength > 0, "solution found");
 	Check(bfsLength == biBfsLength, "BFS and bidirectional BFS agree on optimal length");
@@ -224,8 +246,13 @@ int CheckOptimalAgreement(BallSort<C, H> &env, const BallSortState<C, H> &start,
 	Check(bfsLength == dijkstraLength, "BFS and Dijkstra agree on optimal length");
 	Check(bfsLength == astarLength, "BFS and A* agree on optimal length");
 	Check(bfsLength == idaStarLength, "BFS and IDA* agree on optimal length");
+	Check(bfsLength == astarDFVSLength, "BFS and A* with the paper's DFVS bound agree on optimal length");
+	Check(bfsLength == rscbt.solutionLength, "BFS and RSCBT (Althaus et al.) agree on optimal length");
 	Check(env.HCost(start) <= bfsLength, "heuristic is admissible on this instance");
+	Check(paperBound.HCost(start, goal) <= bfsLength, "paper's DFVS bound is admissible on this instance");
 	Check(astarExpanded <= dijkstraExpanded, "A* expands no more nodes than Dijkstra");
+	Check(astarDFVSExpanded <= astarExpanded,
+		  "the paper's bound expands no more than BallSort::HCost (it dominates it)");
 
 	return bfsLength;
 }
@@ -295,6 +322,72 @@ void CheckWeightedAndGreedy(BallSort<C, H> &env, const BallSortState<C, H> &star
 	Check(greedyLength >= optimalLength, "greedy best-first length >= optimal");
 }
 
+// The paper's simple lower bound (instance_gen.h) checked against ground truth: BFS gives
+// the true optimal length, so the bound must not exceed it. This is the only validation
+// available for that bound short of reproducing the paper's Figure 4 by hand, and it is a
+// stronger one -- it runs on every instance below rather than on one worked example.
+//
+// The second check is the reason to care: the bound dominates BallSort::HCost. Both count
+// a ball in the wrong tube once, but HCost scores a ball that sits in its own tube on top
+// of a foreign ball as 0, where the bound correctly scores it 2 -- it has to come out and
+// go back. If it holds here it is the heuristic to switch A*/IDA* over to (see README).
+template <int C, int H>
+void CheckSimpleLowerBound(BallSort<C, H> &env, const std::vector<int> &colors, int instance)
+{
+	typedef BallSortState<C, H> State;
+	State start;
+	start.SetFromColorSequence(colors);
+	State goal = env.GetGoalState();
+
+	std::vector<State> path;
+	BFS<State, BallSortMove, BallSort<C, H>> bfs;
+	bfs.SetVerbose(false);
+	bfs.GetPath(&env, start, goal, path);
+	int optimalLength = static_cast<int>(path.size())-1;
+
+	int simpleLB = SimpleLowerBound(colors, C, H);
+	int misplaced = static_cast<int>(env.HCost(start));
+
+	printf("  instance %d: optimal=%d  simple LB=%d  HCost=%d  final-position balls=%d\n",
+		   instance, optimalLength, simpleLB, misplaced,
+		   BallsInFinalPosition(colors, C, H));
+
+	Check(optimalLength > 0, "solution found");
+	Check(simpleLB <= optimalLength, "paper's simple lower bound is admissible");
+	Check(misplaced <= simpleLB, "simple lower bound dominates BallSort::HCost");
+}
+
+// The instance file format is the contract between generate_instances and every future
+// experiment driver, so the writer and reader have to round-trip exactly. Run over the
+// writer/reader pair the generator itself uses, so this covers reading the paper's own
+// published .in files too -- same code path.
+template <int C, int H>
+void CheckInstanceFileRoundTrip(const std::vector<int> &colors)
+{
+	std::ostringstream written;
+	WritePaperInstance(written, colors, C, H);
+
+	std::istringstream toRead(written.str());
+	int numColors = -1, tubeHeight = -1;
+	std::string error;
+	std::vector<int> readBack = ReadPaperInstance(toRead, numColors, tubeHeight, error);
+
+	Check(error.empty(), "instance file parses without error");
+	Check(numColors == C, "instance file round-trips the color count");
+	Check(tubeHeight == H, "instance file round-trips the tube height");
+	Check(readBack == colors, "instance file round-trips the color sequence");
+
+	// A start state built from the parsed sequence must be a legal start: colored tubes
+	// full, reserve empty.
+	BallSortState<C, H> s;
+	s.SetFromColorSequence(readBack);
+	Check(s.IsEmpty(0), "parsed instance leaves the reserve empty");
+	bool allFull = true;
+	for (int t = 1; t <= C; t++)
+		allFull = allFull && s.IsFull(t);
+	Check(allFull, "parsed instance fills every colored tube");
+}
+
 } // namespace
 
 int main()
@@ -340,6 +433,30 @@ int main()
 			int optimalLength = CheckOptimalAgreement<3, 3>(env, start, i);
 			CheckWeightedAndGreedy<3, 3>(env, start, i, optimalLength);
 		}
+	}
+
+	// Cell 3x4 in the paper's naming (height 3 over 4 tubes) is BallSort<3,3>, and these
+	// are literally instances/3x4/random_generated_3x4_{0..4}.in: the generator draws
+	// instance i of a cell from InstanceSeed(seed, height, tubes, i), so reproducing that
+	// call reproduces the file.
+	printf("paper's simple lower bound vs. optimal, cell 3x4 (c=3, h=3)\n");
+	{
+		BallSort<3, 3> env;
+		for (int i = 0; i < 5; i++)
+		{
+			std::mt19937 gen(static_cast<std::mt19937::result_type>(InstanceSeed(20250726, 3, 4, i)));
+			std::vector<int> colors = RandomColorSequence(3, 3, gen);
+			CheckSimpleLowerBound<3, 3>(env, colors, i);
+		}
+	}
+
+	printf("instance file format round-trip\n");
+	{
+		std::mt19937 rt(4242);
+		CheckInstanceFileRoundTrip<3, 3>(RandomColorSequence(3, 3, rt)); // cell 3x4
+		CheckInstanceFileRoundTrip<2, 5>(RandomColorSequence(2, 5, rt)); // cell 5x3
+		CheckInstanceFileRoundTrip<6, 2>(RandomColorSequence(6, 2, rt)); // cell 2x7
+		printf("  round-tripped cells 3x4, 5x3, 2x7\n");
 	}
 
 	if (failures == 0)

@@ -1,7 +1,19 @@
 //
 //  BallSort.h
 //
-//  The "colored balls in colored tubes" domain, faithful to Althaus et al.
+//  The "colored balls in colored tubes" domain.
+//
+//  The problem definition is not ours. It is the "RSCBT" of Definitions 1-2 of
+//
+//    Althaus, E.; Blumenstock, M.; Rassau, N.; Schuhknecht, F. M.; and Zimdars, A. Q.
+//    2025. Sorting colored balls in colored tubes. In Proceedings of the 18th
+//    International Symposium on Combinatorial Search (SoCS 2025), 11-19. AAAI Press.
+//    https://ojs.aaai.org/index.php/SOCS/article/view/35971
+//
+//  This implementation is ours -- written against HOG2's SearchEnvironment interface and
+//  modeled on hog2/environments/TOH.h, not derived from the authors' C++ (their solver is
+//  a threaded, disk-backed BFS with a DFVS lower bound). See the README's "Provenance and
+//  attribution" section.
 //
 //  Tubes are indexed 0..numColors. Tube 0 is the uncolored reserve; tube i (i >= 1)
 //  is the goal tube for color i. Every tube holds at most tubeHeight balls.

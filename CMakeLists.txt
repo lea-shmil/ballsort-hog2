@@ -39,6 +39,25 @@ target_include_directories(ballsort PRIVATE
 )
 target_compile_definitions(ballsort PRIVATE NO_OPENGL)
 
+# The experiment runner: one (algorithm, instance) pair per process, one CSV row out. One
+# pair per process is what lets the sweep be a SLURM job array.
+add_executable(run_experiment src/run_experiment.cpp ${HOG2_SOURCES})
+target_include_directories(run_experiment PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/environments
+  ${HOG2_INCLUDE_DIRS}
+)
+target_compile_definitions(run_experiment PRIVATE NO_OPENGL)
+
+# Validation for the ported DFVS lower bound and the exact solver under it.
+add_executable(dfvs_check src/test_dfvs.cpp ${HOG2_SOURCES})
+target_include_directories(dfvs_check PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/environments
+  ${HOG2_INCLUDE_DIRS}
+)
+target_compile_definitions(dfvs_check PRIVATE NO_OPENGL)
+
 # Instance generation is pure combinatorics -- deliberately independent of HOG2 and of
 # BallSort.h, so it gets no HOG2 include dirs and doesn't link against HOG2_SOURCES.
 add_executable(generate_instances src/generate_instances.cpp)
