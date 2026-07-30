@@ -428,6 +428,27 @@ bash slurm/submit_sweep.sh                                              # chunke
 slurm/aggregate_results.py                                              # when it finishes
 ```
 
+### Email notification (optional, per account)
+
+To be emailed when the arrays finish:
+
+```sh
+cp slurm/local.conf.example slurm/local.conf   # then set MAIL_USER to your address
+```
+
+`slurm/local.conf` is **gitignored**, so it exists only in the checkout of whoever created it.
+An address is personal, and someone else launching this sweep should not be mailing you — that
+is why the setting lives in an untracked file rather than in a `#SBATCH` directive.
+`submit_sweep.sh` sources it automatically and reports whether mail is on; environment
+variables override the file, so a one-off run needs no edit. For scripts submitted by hand,
+`source slurm/local.conf` first — it also exports `SBATCH_MAIL_USER` / `SBATCH_MAIL_TYPE`,
+which `sbatch` picks up as defaults for any job.
+
+**Never add `ARRAY_TASKS` to `MAIL_TYPE`.** Without it, `END` and `FAIL` apply to a job array
+*as a whole*, so you get one message per chunk — two for the current sweep. With it, you get
+one per array task, which here is a four-figure pile of mail. Since chunks are chained with
+`afterany`, the last chunk's `END` message is the "whole sweep is done" signal.
+
 **The sweep is pinned to one machine type.** `experiment_sweep.sbatch` carries
 `--partition=cpu --constraint=cpu128`, which restricts it to the twelve `ise-cpu128-*` nodes
 — all AMD EPYC 7702P at the same max clock, verified rather than assumed. This is not

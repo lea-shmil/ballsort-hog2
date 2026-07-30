@@ -23,3 +23,6 @@ instances/
 .idea/
 *.swp
 .DS_Store
+
+# per-account SLURM settings (email address); never committed
+slurm/local.conf

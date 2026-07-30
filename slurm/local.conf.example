@@ -1,0 +1,28 @@
+# Per-account SLURM settings for this repo. Copy to slurm/local.conf and edit.
+#
+#   cp slurm/local.conf.example slurm/local.conf
+#
+# slurm/local.conf is gitignored on purpose. Everything in here is personal to whoever is
+# running the sweep -- an email address most of all -- so it must never be committed and
+# never reach anyone else's checkout. Nobody else launching these jobs gets your mail.
+#
+# slurm/submit_sweep.sh sources this file automatically if it exists. For scripts you submit
+# by hand (slurm/build_and_generate.sbatch), source it first in the same shell:
+#
+#   source slurm/local.conf && sbatch slurm/build_and_generate.sbatch
+#
+# because it also exports SBATCH_MAIL_USER / SBATCH_MAIL_TYPE, which sbatch reads as defaults
+# for any job. Or put the two lines in your own shell profile and forget about it.
+
+# Where to send job notifications. Leave empty or delete the file for no email at all.
+MAIL_USER=you@post.bgu.ac.il
+
+# Which state changes to mail about. END fires when a job finishes, FAIL when it fails.
+#
+# Do NOT add ARRAY_TASKS. Without it, END and FAIL apply to a job array *as a whole* -- one
+# message per array. With it, you get one message per array task, which for this sweep means
+# a four-figure pile of email.
+MAIL_TYPE=END,FAIL
+
+export SBATCH_MAIL_USER="$MAIL_USER"
+export SBATCH_MAIL_TYPE="$MAIL_TYPE"
