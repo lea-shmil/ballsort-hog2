@@ -328,6 +328,11 @@ missing header to `include/hog2_prelude.h` instead. That is precisely what that 
 
 ## The algorithm comparison
 
+**Results so far: [`RESULTS.md`](RESULTS.md)** — the `--count 2` triage pass over all 22 core
+cells (1,885 runs, one CPU model). Headline: A\* with the paper's DFVS bound solves every cell
+and expands three to four orders of magnitude fewer nodes than the same search with our
+misplaced-ball heuristic, and every optimal algorithm agrees on every instance.
+
 ### Algorithms
 
 | Name | What it is |
