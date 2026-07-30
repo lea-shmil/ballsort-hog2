@@ -63,8 +63,8 @@ def load_rows(rowdir):
             if line.startswith("algorithm,"):
                 continue
             parts = line.split(",")
-            if len(parts) != 15:
-                print(f"warning: {path}: expected 15 fields, got {len(parts)} -- skipped",
+            if len(parts) != 17:
+                print(f"warning: {path}: expected 17 fields, got {len(parts)} -- skipped",
                       file=sys.stderr)
                 continue
             row = {
@@ -76,6 +76,7 @@ def load_rows(rowdir):
                 "max_elements_in_memory": int(parts[10]),
                 "runtime_seconds": float(parts[11]), "peak_rss_kb": int(parts[12]),
                 "iterations": int(parts[13]), "root_lower_bound": int(parts[14]),
+                "node": parts[15], "cpu_model": parts[16],
             }
             rows.append(row)
     return rows
@@ -258,7 +259,7 @@ def main():
     with open(all_runs, "w", newline="") as f:
         w = csv.writer(f)
         header = ["algorithm", "cell", "colors", "height", "instance", "seed_label",
-                  "solved"] + NUMERIC
+                  "solved"] + NUMERIC + ["node", "cpu_model"]
         w.writerow(header)
         for row in sorted(rows, key=lambda r: (r["cell"], r["algorithm"],
                                                r["seed_label"], r["instance"])):
@@ -267,6 +268,12 @@ def main():
     contract = os.path.join(args.outdir, "contract.txt")
     disagreements, violations, checked = check_contract(rows, contract)
     per_cell, n_timeouts, n_attempted = aggregate(rows, attempted, args.outdir)
+
+    # Timing comparability check. runtime_seconds is one of the paper's four metrics, and it
+    # is only comparable across rows from the same hardware. The sweep pins itself to one
+    # machine type; this is what verifies that actually happened rather than assuming it.
+    cpu_models = sorted({r["cpu_model"] for r in rows})
+    nodes_used = sorted({r["node"] for r in rows})
 
     seeds = sorted({r["seed_label"] for r in rows})
     cells = sorted({r["cell"] for r in rows})
@@ -282,6 +289,12 @@ def main():
     print(f"optimal-length agreement: {checked} instance(s) cross-checked, "
           f"{disagreements} disagreement(s)")
     print(f"suboptimal-bound violations: {violations}")
+    print(f"ran on {len(nodes_used)} node(s), {len(cpu_models)} CPU model(s): "
+          f"{'; '.join(cpu_models)}")
+    if len(cpu_models) > 1:
+        print("WARNING: rows span more than one CPU model -- node counts and solution "
+              "lengths are unaffected, but runtime_seconds is not comparable across them. "
+              "Re-run the sweep pinned to one machine type (--constraint).")
 
     if disagreements or violations:
         print("\nCONTRACT VIOLATED -- see contract.txt. Do not report these numbers.")

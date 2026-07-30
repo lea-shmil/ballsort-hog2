@@ -35,6 +35,7 @@
 #include <fstream>
 #include <string>
 #include <sys/resource.h>
+#include <unistd.h>
 #include <vector>
 
 #include "hog2_prelude.h" // must precede all HOG2 headers
@@ -72,7 +73,50 @@ struct RunRecord {
 	long peakRssKb = 0;
 	int iterations = 0;
 	int rootLowerBound = -1;
+
+	// Where this ran. Recorded because runtime_seconds is only comparable across rows that
+	// ran on the same hardware; the sweep pins itself to one machine type, and these two
+	// columns are what let that be checked after the fact rather than trusted.
+	std::string node;
+	std::string cpuModel;
 };
+
+// Hostname, short form.
+std::string Hostname()
+{
+	char buffer[256] = {0};
+	if (gethostname(buffer, sizeof(buffer)-1) != 0)
+		return "unknown";
+	std::string name(buffer);
+	size_t dot = name.find('.');
+	return dot == std::string::npos ? name : name.substr(0, dot);
+}
+
+// CPU model from /proc/cpuinfo. Commas are stripped so the field cannot break the CSV.
+std::string CpuModel()
+{
+	std::ifstream info("/proc/cpuinfo");
+	std::string line;
+	while (std::getline(info, line))
+	{
+		if (line.rfind("model name", 0) != 0)
+			continue;
+		size_t colon = line.find(':');
+		if (colon == std::string::npos)
+			break;
+		std::string model = line.substr(colon+1);
+		size_t first = model.find_first_not_of(" \t");
+		size_t last = model.find_last_not_of(" \t\r\n");
+		if (first == std::string::npos)
+			break;
+		model = model.substr(first, last-first+1);
+		for (char &c : model)
+			if (c == ',')
+				c = ' ';
+		return model;
+	}
+	return "unknown";
+}
 
 double NowSeconds()
 {
@@ -268,17 +312,18 @@ void PrintHeader()
 {
 	printf("algorithm,cell,colors,height,instance,seed_label,solved,solution_length,"
 		   "nodes_expanded,nodes_generated,max_elements_in_memory,runtime_seconds,"
-		   "peak_rss_kb,iterations,root_lower_bound\n");
+		   "peak_rss_kb,iterations,root_lower_bound,node,cpu_model\n");
 }
 
 void PrintRow(const RunRecord &r)
 {
-	printf("%s,%s,%d,%d,%d,%s,%d,%d,%llu,%llu,%llu,%.6f,%ld,%d,%d\n",
+	printf("%s,%s,%d,%d,%d,%s,%d,%d,%llu,%llu,%llu,%.6f,%ld,%d,%d,%s,%s\n",
 		   r.algorithm.c_str(), r.cell.c_str(), r.numColors, r.tubeHeight,
 		   r.instanceIndex, r.seedLabel.c_str(), r.solved ? 1 : 0, r.solutionLength,
 		   (unsigned long long)r.nodesExpanded, (unsigned long long)r.nodesGenerated,
 		   (unsigned long long)r.maxElementsInMemory, r.runtimeSeconds,
-		   r.peakRssKb, r.iterations, r.rootLowerBound);
+		   r.peakRssKb, r.iterations, r.rootLowerBound,
+		   r.node.c_str(), r.cpuModel.c_str());
 }
 
 void PrintUsage(const char *prog)
@@ -398,6 +443,8 @@ int main(int argc, char **argv)
 
 	record.runtimeSeconds = Median(times);
 	record.peakRssKb = PeakRssKb();
+	record.node = Hostname();
+	record.cpuModel = CpuModel();
 
 	if (wantHeader)
 		PrintHeader();

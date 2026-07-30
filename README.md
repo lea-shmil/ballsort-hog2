@@ -428,6 +428,19 @@ bash slurm/submit_sweep.sh                                              # chunke
 slurm/aggregate_results.py                                              # when it finishes
 ```
 
+**The sweep is pinned to one machine type.** `experiment_sweep.sbatch` carries
+`--partition=cpu --constraint=cpu128`, which restricts it to the twelve `ise-cpu128-*` nodes
+— all AMD EPYC 7702P at the same max clock, verified rather than assumed. This is not
+housekeeping: runtime is one of the four metrics, and the `cpu` partition also holds
+`cs-cpu-*` boxes and the `ise-cpu256-*` machines, while the login shell itself sits on an
+Intel Xeon E5-2680 v2. An unpinned array would spread tasks across CPU generations six years
+apart and the wall-clock column would be measuring hardware rather than algorithms. Node
+counts and solution lengths are hardware-independent and would survive; timings would not.
+
+Belt and braces: every row also records `node` and `cpu_model`, and
+`aggregate_results.py` warns if the rows span more than one CPU model. So the pinning is
+checkable from the data rather than trusted.
+
 One array task is one `(algorithm, instance)` pair at **60 min / 32 GB, single-threaded**.
 One pair per task is the design: tasks are independent, a task over either limit is killed by
 SLURM without touching the rest, and a killed task is a *result* — a timeout, which is what

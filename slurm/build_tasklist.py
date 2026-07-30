@@ -57,6 +57,30 @@ MAX_TIER = {
 DEFAULT_MAX_TIER = "D"       # informed algorithms and rscbt are attempted everywhere
 
 
+def row_path(rowdir, algorithm, instance, seed):
+    """Where experiment_sweep.sbatch writes this task's row. Must match the shell:
+       ROW="$ROWDIR/${ALGORITHM}__$(tr '/' '_' <<<"$INSTANCE")__seed${SEED_LABEL}.csv"
+    """
+    return os.path.join(rowdir, f"{algorithm}__{instance.replace('/', '_')}__seed{seed}.csv")
+
+
+def already_done(rowdir, algorithm, instance, seed):
+    """True only if a *completed* run left a row behind.
+
+    Emptiness is the discriminator, and it matters. The array script opens the row file with
+    `>` before run_experiment starts, so a task killed by SLURM for exceeding its time or
+    memory limit leaves a zero-byte file behind. Treating that as done would permanently
+    retire every timeout from the sweep and, worse, drop it from the task list -- which is
+    what aggregate_results.py reads to tell "timed out" from "never attempted". So an empty
+    row counts as not done and gets retried.
+    """
+    path = row_path(rowdir, algorithm, instance, seed)
+    try:
+        return os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
 def generate(binary, grid, seed, count, outdir):
     """Generate one seed's instance tree. Returns the manifest path."""
     target = os.path.join(outdir, f"seed-{seed}")
@@ -79,6 +103,13 @@ def main():
     ap.add_argument("--binary", default="./build/generate_instances")
     ap.add_argument("--all", action="store_true",
                     help="attempt every algorithm on every cell, ignoring the tier caps")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="omit tasks that already have a non-empty row in --rowdir, so a "
+                         "scale-up only runs what is missing. Instances are a function of "
+                         "(seed, height, tubes, index) and the algorithms are deterministic, "
+                         "so an existing row is exactly the row this task would reproduce.")
+    ap.add_argument("--rowdir", default="results/rows",
+                    help="where completed rows live (default results/rows)")
     args = ap.parse_args()
 
     seeds = [s.strip() for s in args.seeds.split(",") if s.strip()]
@@ -91,6 +122,7 @@ def main():
 
     rows = []
     skipped = []
+    reused = 0
     for seed in seeds:
         manifest = generate(args.binary, args.grid, seed, args.count, args.outdir)
         with open(manifest) as f:
@@ -102,6 +134,10 @@ def main():
                     if not args.all and TIER_ORDER[tier] > TIER_ORDER[cap]:
                         skipped.append((algorithm, entry["cell"], tier, cap))
                         continue
+                    if args.skip_existing and already_done(args.rowdir, algorithm,
+                                                           instance, seed):
+                        reused += 1
+                        continue
                     rows.append((algorithm, instance, seed))
 
     with open(args.tasklist, "w") as f:
@@ -109,6 +145,9 @@ def main():
         f.write(f"# grid={args.grid} seeds={','.join(seeds)} count={args.count}\n")
         f.write(f"# {len(rows)} tasks, {len(skipped)} (algorithm, instance) pairs "
                 f"skipped by tier cap\n")
+        if args.skip_existing:
+            f.write(f"# {reused} task(s) omitted: a completed row already exists in "
+                    f"{args.rowdir}\n")
         # Summarize the skips per (algorithm, cap) with the cells involved, so the record
         # says what was not attempted and why without one line per instance.
         by_algorithm = defaultdict(set)
@@ -125,6 +164,9 @@ def main():
     if skipped:
         print(f"{len(skipped)} pairs skipped by the tier caps "
               f"(use --all to attempt them anyway)")
+    if args.skip_existing:
+        print(f"{reused} task(s) already have a completed row in {args.rowdir} and were "
+              f"omitted")
     chunks = (len(rows)+1000)//1001
     print(f"MaxArraySize is 1001, so this needs {chunks} array submission(s): "
           f"bash slurm/submit_sweep.sh")

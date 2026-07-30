@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=bs-sweep
-#SBATCH --partition=main
+#SBATCH --partition=cpu
+#SBATCH --constraint=cpu128
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -10,6 +11,19 @@
 #SBATCH --error=logs/sweep/%A_%a.out
 #
 # One array task = one (algorithm, instance) pair = one CSV row.
+#
+# **Pinned to one machine type.** `--constraint=cpu128` restricts the sweep to the twelve
+# ise-cpu128-* nodes, which are all AMD EPYC 7702P at the same max clock (verified, not
+# assumed). This matters because runtime is one of the four metrics the paper reports: the
+# `cpu` partition also holds cs-cpu-* boxes with different core counts and the ise-cpu256-*
+# machines, so an unpinned array would spread tasks across CPU generations and the
+# wall-clock column would be measuring hardware rather than algorithms. Node counts and
+# solution lengths are hardware-independent and would survive; the timings would not.
+#
+# Every row also records the node it ran on and that node's CPU model, so any residual
+# heterogeneity is visible in the data instead of being assumed away. Override the pinning
+# with CONSTRAINT= if a different homogeneous group is wanted:
+#   sbatch --constraint=cpu256 ...
 #
 # 60 minutes and 32 GB per task, single-threaded, as agreed. One pair per task is the whole
 # point: tasks are independent, a task that exceeds either limit is killed by SLURM without
