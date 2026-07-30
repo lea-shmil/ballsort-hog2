@@ -9,6 +9,10 @@
 #   bash slurm/submit_sweep.sh [TASKLIST] [CONCURRENCY]
 #
 #   TASKLIST     default results/tasks.tsv (from slurm/build_tasklist.py)
+#
+#   NOMAIL=1     suppress job notifications entirely. Always set this for trial or debug
+#                submissions -- cancelling one otherwise emails a FAIL that is
+#                indistinguishable from a real sweep failure.
 #   CONCURRENCY  max *cores* in flight, default 100. Per-array concurrency is derived from
 #                it as CONCURRENCY/threads, so a 16-thread partition runs fewer tasks at
 #                once rather than 16x the cores. The cpu128 group has 12 x 128 = 1536 cores
@@ -24,19 +28,40 @@ CHUNK=1000
 # Optional per-account settings, chiefly an email address for job notifications. Gitignored,
 # so it exists only in the checkout of whoever created it -- nobody else launching this sweep
 # gets someone else's mail. See slurm/local.conf.example.
+#
+# The environment has to be captured *before* sourcing, because local.conf assigns
+# unconditionally and would otherwise clobber it. Without this, `MAIL_USER= bash
+# submit_sweep.sh` silently still sends mail -- which is exactly how four cancelled trial
+# submissions ended up in someone's inbox.
+MAIL_USER_ENV="${MAIL_USER-__unset__}"
+MAIL_TYPE_ENV="${MAIL_TYPE-__unset__}"
+
 if [ -f slurm/local.conf ]; then
 	# shellcheck disable=SC1091
 	source slurm/local.conf
 fi
 
-# Environment wins over the file, so a one-off run can override without editing anything.
+if [ "$MAIL_USER_ENV" != "__unset__" ]; then
+	MAIL_USER="$MAIL_USER_ENV"
+fi
+if [ "$MAIL_TYPE_ENV" != "__unset__" ]; then
+	MAIL_TYPE="$MAIL_TYPE_ENV"
+fi
 MAIL_USER="${MAIL_USER:-}"
-MAIL_TYPE="${MAIL_TYPE:-END,FAIL}"
+MAIL_TYPE="${MAIL_TYPE:-BEGIN,END,FAIL}"
+
+# NOMAIL=1 forces silence regardless of the config. Use it for every trial or debug
+# submission: a cancelled trial otherwise sends a FAIL notice that looks exactly like a real
+# sweep failing.
+if [ -n "${NOMAIL:-}" ]; then
+	MAIL_USER=""
+fi
 
 MAIL_ARGS=()
 if [ -n "$MAIL_USER" ]; then
-	# Deliberately no ARRAY_TASKS: without it, END and FAIL apply to the array as a whole,
-	# so this is one message per chunk. With it, it would be one per task -- thousands.
+	# Deliberately no ARRAY_TASKS: without it, BEGIN, END and FAIL apply to the array as a
+	# whole, so this is a handful of messages. With it, it would be one per array task --
+	# thousands.
 	MAIL_ARGS=(--mail-user="$MAIL_USER" --mail-type="$MAIL_TYPE")
 fi
 

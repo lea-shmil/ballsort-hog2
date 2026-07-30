@@ -15,14 +15,15 @@
 # for any job. Or put the two lines in your own shell profile and forget about it.
 
 # Where to send job notifications. Leave empty or delete the file for no email at all.
-MAIL_USER=you@post.bgu.ac.il
+MAIL_USER="${MAIL_USER:-you@post.bgu.ac.il}"
 
-# Which state changes to mail about. END fires when a job finishes, FAIL when it fails.
+# Which state changes to mail about. BEGIN fires when the array starts running, END when
+# it finishes, FAIL when it fails.
 #
 # Do NOT add ARRAY_TASKS. Without it, END and FAIL apply to a job array *as a whole* -- one
 # message per array. With it, you get one message per array task, which for this sweep means
 # a four-figure pile of email.
-MAIL_TYPE=END,FAIL
+MAIL_TYPE="${MAIL_TYPE:-BEGIN,END,FAIL}"
 
 export SBATCH_MAIL_USER="$MAIL_USER"
 export SBATCH_MAIL_TYPE="$MAIL_TYPE"
