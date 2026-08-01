@@ -50,6 +50,37 @@ ALGORITHMS = [
 PARALLEL_THREADS = 16
 THREADS = {"rscbt-par": PARALLEL_THREADS}
 
+# Memory per algorithm, in GB. Measured, not guessed: over 9,817 runs the algorithms that
+# keep a closed list peaked at 15-32 GB, while every other algorithm in the set -- the
+# informed searches, rscbt, the weight sweep, iddfs -- stayed under 0.5 GB. Giving all of
+# them the same large allocation would cut concurrency by an order of magnitude to no
+# purpose, so they are partitioned and submitted as separate arrays.
+#
+# 60 GB for the closed-list group. The ceiling is set by what the shared cluster will
+# actually schedule, not by what the cells want: the cpu128 nodes have 514 GB each but run
+# with most of it already allocated to other users (491 of 514 GB on one node when this was
+# measured), so a 240 GB request is accepted and then pends on Resources indefinitely. 60 GB
+# schedules promptly and still leaves the node headroom -- both for other jobs and for the
+# search process itself beyond its closed list.
+#
+# What that buys, at the ~150 bytes per state these searches use: 11x3 (8 GB), 2x7 (31 GB)
+# and 12x3 (37 GB) now fit where the previous 32 GB cap was killing them. What it does not
+# buy: 13x3 needs about 164 GB and 6x4 about 216 GB, and beyond those 4x5 needs 660 GB, 3x6
+# 1.4 TB, 2x8 3.7 TB and 7x4 7.2 TB. Exhaustive search on those cells is out of reach on this
+# cluster, so running out of memory is the finding rather than a misconfiguration -- the same
+# thing the paper reports as empty boxes in its Figure 6, and the reason every row records
+# the limit it ran under.
+CLOSED_LIST_MEMORY_GB = 60
+DEFAULT_MEMORY_GB = 8
+MEMORY_GB = {
+    "bfs": CLOSED_LIST_MEMORY_GB,
+    "bibfs": CLOSED_LIST_MEMORY_GB,
+    "dijkstra": CLOSED_LIST_MEMORY_GB,
+    "frontier-bfs": CLOSED_LIST_MEMORY_GB,
+    "astar-misplaced": CLOSED_LIST_MEMORY_GB,
+    "astar-paper": CLOSED_LIST_MEMORY_GB,   # also keeps a closed list, though it rarely fills it
+}
+
 # Difficulty tiers, from the reachable state count, documented in the README.
 #
 # Every algorithm is now attempted on every tier. Earlier runs capped the exhaustive searches
@@ -144,10 +175,12 @@ def main():
                                                            instance, seed):
                         reused += 1
                         continue
-                    rows.append((algorithm, instance, seed, THREADS.get(algorithm, 1)))
+                    rows.append((algorithm, instance, seed,
+                                 THREADS.get(algorithm, 1),
+                                 MEMORY_GB.get(algorithm, DEFAULT_MEMORY_GB)))
 
     with open(args.tasklist, "w") as f:
-        f.write("# algorithm\tinstance\tseed_label\tthreads\n")
+        f.write("# algorithm\tinstance\tseed_label\tthreads\tmemory_gb\n")
         f.write(f"# grid={args.grid} seeds={','.join(seeds)} count={args.count}\n")
         f.write(f"# {len(rows)} tasks, {len(skipped)} (algorithm, instance) pairs "
                 f"skipped by tier cap\n")
@@ -162,8 +195,8 @@ def main():
         for (algorithm, cap), cells in sorted(by_algorithm.items()):
             f.write(f"# not attempted: {algorithm} capped at tier {cap}, "
                     f"skipping {' '.join(sorted(cells))}\n")
-        for algorithm, instance, seed, threads in rows:
-            f.write(f"{algorithm}\t{instance}\t{seed}\t{threads}\n")
+        for algorithm, instance, seed, threads, memory in rows:
+            f.write(f"{algorithm}\t{instance}\t{seed}\t{threads}\t{memory}\n")
 
     print(f"wrote {len(rows)} tasks to {args.tasklist}")
     print(f"seeds: {', '.join(seeds)}  grid: {args.grid}  instances/cell/seed: {args.count}")

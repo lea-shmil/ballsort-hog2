@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --mem=32G
+#SBATCH --mem=60G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/sweep/%A_%a.out
 #SBATCH --error=logs/sweep/%A_%a.out
@@ -25,11 +25,29 @@
 # with CONSTRAINT= if a different homogeneous group is wanted:
 #   sbatch --constraint=cpu256 ...
 #
-# 60 minutes and 32 GB per task, single-threaded, as agreed. One pair per task is the whole
-# point: tasks are independent, a task that exceeds either limit is killed by SLURM without
-# touching anything else, and a killed task is a *result* -- a timeout, which is what the
-# paper's empty Figure 6 boxes are -- rather than a lost run. CLAUDE.md's "single-threaded
-# per task, parallelize with job arrays" is exactly this shape.
+# One pair per task is the whole point: tasks are independent, a task that exceeds a limit is
+# killed by SLURM without touching anything else, and a killed run is a *result* -- a timeout
+# or an exhausted memory budget, which is what the paper's empty Figure 6 boxes are -- rather
+# than a lost run. CLAUDE.md's "single-threaded per task, parallelize with job arrays" is
+# exactly this shape.
+#
+# **Memory is set per algorithm by submit_sweep.sh, which overrides the directive above.**
+# Measured over 9,817 runs: the closed-list searches (bfs, bibfs, dijkstra, frontier-bfs,
+# astar-*) peak at 15-32 GB and keep climbing with the cell, while the other twelve
+# algorithms never exceed 0.5 GB. An earlier sweep gave everything 32 GB and lost 258 array
+# tasks to the OOM killer on cells that would have fitted in a larger allocation -- 13x3
+# needs about 164 GB and 6x4 about 216 GB at the ~150 bytes per state these searches use.
+# build_tasklist.py now tags each task with its memory, and submit_sweep.sh submits one array
+# per (threads, memory) profile.
+#
+# The directive is the fallback for a direct submission. 60 GB is the practical ceiling here:
+# the cpu128 nodes hold 514 GB but run mostly allocated to other users, so larger requests are
+# accepted and then pend on Resources rather than running. It also leaves the search room
+# beyond its closed list rather than sizing the request to the whole node.
+#
+# More memory would not make every cell fit and is not meant to: exhaustive search needs about
+# 164 GB on 13x3, 216 GB on 6x4, 660 GB on 4x5, 1.4 TB on 3x6, 3.7 TB on 2x8 and 7.2 TB on
+# 7x4. On those, running out of memory is the finding.
 #
 # **Each array task runs a batch of consecutive task-list lines**, not just one. That is
 # forced by the cluster's QOS: `cpu-part` allows a user at most 2000 submitted jobs, and every

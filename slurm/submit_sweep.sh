@@ -13,6 +13,11 @@
 #   NOMAIL=1     suppress job notifications entirely. Always set this for trial or debug
 #                submissions -- cancelling one otherwise emails a FAIL that is
 #                indistinguishable from a real sweep failure.
+#   MEM_BUDGET_GB  max memory in flight across a partition, default 720 GB -- about one
+#                memory-heavy task per cpu128 node. Concurrency is the smaller of the core
+#                and memory budgets, so the 60 GB closed-list arrays self-limit to a dozen.
+#                The QOS would allow 4 TB, but the nodes are mostly allocated to other users,
+#                so a budget sized to the QOS pends instead of running.
 #   CONCURRENCY  max *cores* in flight, default 100. Per-array concurrency is derived from
 #                it as CONCURRENCY/threads, so a 16-thread partition runs fewer tasks at
 #                once rather than 16x the cores. The cpu128 group has 12 x 128 = 1536 cores
@@ -23,6 +28,13 @@ set -euo pipefail
 TASKLIST="${1:-results/tasks.tsv}"
 CONCURRENCY="${2:-100}"
 BATCH="${BATCH:-12}"
+# Memory budget in GB for the whole sweep, capping how many memory-hungry tasks run at once.
+# The cpu-part QOS allows a user mem=4T, so 3000 GB leaves headroom; without this cap a
+# 240 GB partition at concurrency 100 would ask for 24 TB and simply never schedule.
+# Roughly one memory-heavy task per cpu128 node. The QOS would allow 4 TB, but the nodes run
+# with most of their memory already allocated to other users, so a budget sized to the QOS
+# would simply pend. Raise it when the partition is quiet.
+MEM_BUDGET_GB="${MEM_BUDGET_GB:-720}"
 CHUNK=1000
 
 # Optional per-account settings, chiefly an email address for job notifications. Gitignored,
@@ -85,18 +97,34 @@ else
 	echo "no email (create slurm/local.conf from slurm/local.conf.example to enable)"
 fi
 
-# Split by worker count. Every algorithm but rscbt-par is serial, so reserving 16 cores for
-# the whole sweep would idle fifteen of them on almost every task. One array per distinct
-# thread count, each with a matching --cpus-per-task, keeps the allocation honest.
-THREAD_COUNTS=$(awk -F'\t' '!/^#/ && NF>=4 {print $4}' "$TASKLIST" | sort -un)
-if [ -z "$THREAD_COUNTS" ]; then
-	THREAD_COUNTS=1   # task list predates the threads column
+# Split by (worker count, memory). Only rscbt-par wants more than one core, and only the
+# closed-list searches want more than a few GB, so a single allocation for the whole sweep
+# would either starve those or waste an order of magnitude of concurrency on the twelve
+# algorithms that peak under 0.5 GB. One array per distinct (threads, memory) pair, each with
+# matching --cpus-per-task and --mem, keeps the allocation honest in both directions.
+PROFILES=$(awk -F'\t' '!/^#/ && NF>=5 {print $4"_"$5}' "$TASKLIST" | sort -u)
+if [ -z "$PROFILES" ]; then
+	# Task list predates the memory column: fall back to thread counts at the sbatch default.
+	PROFILES=$(awk -F'\t' '!/^#/ && NF>=4 {print $4"_default"}' "$TASKLIST" | sort -u)
+fi
+if [ -z "$PROFILES" ]; then
+	PROFILES="1_default"
 fi
 
 DEPENDENCY=""
-for T in $THREAD_COUNTS; do
-	PART="${TASKLIST%.tsv}-t${T}.tsv"
-	awk -F'\t' -v t="$T" '!/^#/ && NF>=4 && $4==t' "$TASKLIST" > "$PART"
+for PROFILE in $PROFILES; do
+	T="${PROFILE%%_*}"
+	MEM_GB="${PROFILE##*_}"
+
+	MEM_ARG=()
+	if [ "$MEM_GB" != "default" ]; then
+		MEM_ARG=(--mem="${MEM_GB}G")
+		PART="${TASKLIST%.tsv}-t${T}m${MEM_GB}.tsv"
+		awk -F'\t' -v t="$T" -v m="$MEM_GB" '!/^#/ && NF>=5 && $4==t && $5==m' "$TASKLIST" > "$PART"
+	else
+		PART="${TASKLIST%.tsv}-t${T}.tsv"
+		awk -F'\t' -v t="$T" '!/^#/ && NF>=4 && $4==t' "$TASKLIST" > "$PART"
+	fi
 	PART_TOTAL=$(grep -vc '^#' "$PART" || true)
 	[ "$PART_TOTAL" -eq 0 ] && continue
 
@@ -113,7 +141,19 @@ for T in $THREAD_COUNTS; do
 	if [ "$PART_CONCURRENCY" -lt 1 ]; then
 		PART_CONCURRENCY=1
 	fi
-	echo "  ${T} thread(s): $PART_TOTAL runs -> $PART_ARRAY_TASKS array task(s) of $BATCH, $PART_CHUNKS chunk(s), $PART_CONCURRENCY at a time (~$(( PART_CONCURRENCY * T )) cores) -> $PART"
+
+	# ...and by memory, for the same reason in the other dimension. The nodes are largely
+	# allocated to other users, so an unbounded number of 60 GB tasks would pend, not run.
+	if [ "$MEM_GB" != "default" ]; then
+		MEM_CONCURRENCY=$(( MEM_BUDGET_GB / MEM_GB ))
+		if [ "$MEM_CONCURRENCY" -lt 1 ]; then
+			MEM_CONCURRENCY=1
+		fi
+		if [ "$MEM_CONCURRENCY" -lt "$PART_CONCURRENCY" ]; then
+			PART_CONCURRENCY=$MEM_CONCURRENCY
+		fi
+	fi
+	echo "  ${T} thread(s), ${MEM_GB} GB: $PART_TOTAL runs -> $PART_ARRAY_TASKS array task(s) of $BATCH, $PART_CHUNKS chunk(s), $PART_CONCURRENCY at a time (~$(( PART_CONCURRENCY * T )) cores) -> $PART"
 
 	for (( c=0; c<PART_CHUNKS; c++ )); do
 		# OFFSET is in task-list lines; the array index then advances in units of BATCH.
@@ -132,11 +172,12 @@ for T in $THREAD_COUNTS; do
 			"${DEP_ARG[@]}" \
 			"${MAIL_ARGS[@]}" \
 			--cpus-per-task="$T" \
+			"${MEM_ARG[@]}" \
 			--array="0-${LAST}%${PART_CONCURRENCY}" \
 			--export=ALL,TASKLIST="$PART",OFFSET="$OFFSET",THREADS="$T",BATCH="$BATCH" \
 			slurm/experiment_sweep.sbatch)
 
-		echo "    chunk $c: line offset $OFFSET, array 0-$LAST, ${T} cpu(s) -> job $JOBID"
+		echo "    chunk $c: line offset $OFFSET, array 0-$LAST, ${T} cpu(s), ${MEM_GB} GB -> job $JOBID"
 		DEPENDENCY="$JOBID"
 	done
 done
