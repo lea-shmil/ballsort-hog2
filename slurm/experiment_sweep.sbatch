@@ -89,6 +89,7 @@ mkdir -p "$ROWDIR"
 
 DONE=0
 TIMED_OUT=0
+OOM=0
 FAILED=0
 
 for (( n=0; n<BATCH; n++ )); do
@@ -114,7 +115,14 @@ for (( n=0; n<BATCH; n++ )); do
 
 	# Each run is capped on its own, so one pathological instance cannot eat the batch's
 	# budget and starve the runs queued behind it in this task.
-	timeout --signal=KILL "$RUN_TIMEOUT" ./build/run_experiment \
+	#
+	# Plain SIGTERM, deliberately: `timeout --signal=KILL` makes a timeout exit 137, which is
+	# exactly what the kernel OOM killer produces, and the two outcomes then cannot be told
+	# apart. With the default signal a timeout exits 124 and only an OOM kill exits 137, which
+	# is the distinction the paper draws when it marks runs that "did not finish (due to
+	# running out of memory)". --kill-after is the backstop for a run that ignores SIGTERM.
+	RUN_START=$(date +%s)
+	timeout --kill-after=60 "$RUN_TIMEOUT" ./build/run_experiment \
 		--algorithm "$ALGORITHM" \
 		--instance "$INSTANCE" \
 		--seed-label "$SEED_LABEL" \
@@ -123,22 +131,34 @@ for (( n=0; n<BATCH; n++ )); do
 		> "$ROW"
 	STATUS=$?
 
+	RUN_ELAPSED=$(( $(date +%s) - RUN_START ))
+
 	if [ $STATUS -eq 0 ]; then
 		DONE=$((DONE+1))
 		cat "$ROW"
 	else
-		# 124/137 are timeout(1) killing the run; anything else is a real failure (bad
-		# arguments, unparsable instance). Either way no row survives, and a missing row is
-		# exactly how aggregate_results.py already records a run that did not finish.
+		# No row survives a kill, and a missing row is how aggregate_results.py records a run
+		# that did not finish. The *reason* is logged here so timeouts and memory exhaustion
+		# stay distinguishable in the record:
+		#   124 -- timeout(1) fired, so the run exceeded RUN_TIMEOUT
+		#   137 -- SIGKILL, which with plain SIGTERM timeouts means the OOM killer
+		#   other -- a real failure (bad arguments, unparsable instance)
 		rm -f "$ROW"
-		if [ $STATUS -eq 124 ] || [ $STATUS -eq 137 ]; then
-			TIMED_OUT=$((TIMED_OUT+1))
-			echo "TIMEOUT after ${RUN_TIMEOUT}s: $ALGORITHM on $INSTANCE (seed $SEED_LABEL)"
-		else
-			FAILED=$((FAILED+1))
-			echo "FAILED (status $STATUS): $ALGORITHM on $INSTANCE (seed $SEED_LABEL)"
-		fi
+		case $STATUS in
+			124)
+				TIMED_OUT=$((TIMED_OUT+1))
+				echo "KILLED reason=timeout elapsed=${RUN_ELAPSED}s limit=${RUN_TIMEOUT}s algorithm=$ALGORITHM instance=$INSTANCE seed=$SEED_LABEL"
+				;;
+			137)
+				OOM=$((OOM+1))
+				echo "KILLED reason=out-of-memory elapsed=${RUN_ELAPSED}s limit=${SLURM_MEM_PER_NODE:-?}MB algorithm=$ALGORITHM instance=$INSTANCE seed=$SEED_LABEL"
+				;;
+			*)
+				FAILED=$((FAILED+1))
+				echo "KILLED reason=failed status=$STATUS elapsed=${RUN_ELAPSED}s algorithm=$ALGORITHM instance=$INSTANCE seed=$SEED_LABEL"
+				;;
+		esac
 	fi
 done
 
-echo "batch finished: $DONE completed, $TIMED_OUT timed out, $FAILED failed"
+echo "batch finished: $DONE completed, $TIMED_OUT timed out, $OOM out of memory, $FAILED failed"
