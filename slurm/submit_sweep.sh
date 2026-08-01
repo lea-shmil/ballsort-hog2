@@ -37,6 +37,16 @@ BATCH="${BATCH:-12}"
 MEM_BUDGET_GB="${MEM_BUDGET_GB:-720}"
 CHUNK=1000
 
+# Wall clock per array task, derived rather than fixed. A batch can be BATCH runs that each use
+# their full RUN_TIMEOUT -- whole batches of linear-space searches (iddfs, idastar-*) do exactly
+# that, because they time out instead of exhausting memory. Asking for only BATCH*RUN_TIMEOUT
+# leaves zero headroom and lets SLURM cut the last run off mid-flight, which leaves neither a row
+# nor a KILLED line. Doubling it costs nothing but queue priority (the partition allows 7 days)
+# and keeps every run's outcome representable in the record.
+RUN_TIMEOUT="${RUN_TIMEOUT:-3600}"
+WALL_SECONDS="${WALL_SECONDS:-$(( BATCH * RUN_TIMEOUT * 2 ))}"
+WALL_HMS=$(printf '%d:%02d:%02d' $((WALL_SECONDS/3600)) $((WALL_SECONDS%3600/60)) $((WALL_SECONDS%60)))
+
 # Optional per-account settings, chiefly an email address for job notifications. Gitignored,
 # so it exists only in the checkout of whoever created it -- nobody else launching this sweep
 # gets someone else's mail. See slurm/local.conf.example.
@@ -91,6 +101,7 @@ fi
 mkdir -p logs/sweep results/rows
 
 echo "$TOTAL tasks total"
+echo "$BATCH run(s) per array task, ${RUN_TIMEOUT}s per run -> --time=$WALL_HMS"
 if [ -n "$MAIL_USER" ]; then
 	echo "email on $MAIL_TYPE to $MAIL_USER -- one message per chunk"
 else
@@ -173,8 +184,9 @@ for PROFILE in $PROFILES; do
 			"${MAIL_ARGS[@]}" \
 			--cpus-per-task="$T" \
 			"${MEM_ARG[@]}" \
+			--time="$WALL_HMS" \
 			--array="0-${LAST}%${PART_CONCURRENCY}" \
-			--export=ALL,TASKLIST="$PART",OFFSET="$OFFSET",THREADS="$T",BATCH="$BATCH" \
+			--export=ALL,TASKLIST="$PART",OFFSET="$OFFSET",THREADS="$T",BATCH="$BATCH",RUN_TIMEOUT="$RUN_TIMEOUT",WALL_SECONDS="$WALL_SECONDS" \
 			slurm/experiment_sweep.sbatch)
 
 		echo "    chunk $c: line offset $OFFSET, array 0-$LAST, ${T} cpu(s), ${MEM_GB} GB -> job $JOBID"

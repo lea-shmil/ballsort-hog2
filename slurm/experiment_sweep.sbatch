@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=60G
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=logs/sweep/%A_%a.out
 #SBATCH --error=logs/sweep/%A_%a.out
 #
@@ -58,7 +58,20 @@
 # Batching does not weaken the per-run limits, which is the point: each run inside the batch
 # gets its own RUN_TIMEOUT via timeout(1), so one pathological instance is killed on its own
 # rather than consuming the batch's budget. A killed run leaves no row, which is exactly how a
-# timeout was already recorded. The task's own --time has to cover BATCH runs, hence 12h.
+# timeout was already recorded.
+#
+# **The task's own --time must exceed BATCH * RUN_TIMEOUT**, because a batch can consist
+# entirely of runs that use their full timeout. That is not a hypothetical: the linear-space
+# searches (iddfs, idastar-*) time out rather than exhaust memory, and the task list groups by
+# cell, so whole batches of twelve 3600s runs occur -- 21 of 117 in one relabelling pass. At
+# --time=12:00:00 with BATCH=12 and RUN_TIMEOUT=3600 the budget is exactly 43200s with zero
+# headroom, so such a batch is killed by SLURM mid-run and its last run is left with no row and
+# no KILLED line: silently indistinguishable from a run that was never attempted.
+#
+# 24h is the default here -- double the 12h a full batch of timeouts needs. The partition allows
+# 7 days, and the cost of over-asking is only scheduling priority, whereas the cost of
+# under-asking is unlabelled runs. submit_sweep.sh computes --time from BATCH and RUN_TIMEOUT
+# rather than relying on this default, and the loop below stops early rather than being cut off.
 #
 # Do not sbatch this directly. Use:
 #
@@ -80,6 +93,11 @@ ROWDIR="${ROWDIR:-results/rows}"
 
 BATCH="${BATCH:-12}"
 RUN_TIMEOUT="${RUN_TIMEOUT:-3600}"
+
+# Seconds of wall clock this array task was granted, so the loop can stop before SLURM cuts it
+# off. submit_sweep.sh passes it alongside --time; the fallback matches the directive above.
+WALL_SECONDS="${WALL_SECONDS:-86400}"
+BATCH_START=$(date +%s)
 
 # This task owns lines [FIRST, FIRST+BATCH) of the task list, 1-based.
 FIRST=$((OFFSET + SLURM_ARRAY_TASK_ID*BATCH + 1))
@@ -109,6 +127,7 @@ DONE=0
 TIMED_OUT=0
 OOM=0
 FAILED=0
+DEFERRED=0
 
 for (( n=0; n<BATCH; n++ )); do
 	LINE_NUMBER=$((FIRST + n))
@@ -130,6 +149,18 @@ for (( n=0; n<BATCH; n++ )); do
 	# appending to one file would interleave and corrupt lines. aggregate_results.py concatenates.
 	SAFE_INSTANCE=$(printf '%s' "$INSTANCE" | tr '/' '_')
 	ROW="$ROWDIR/${ALGORITHM}__${SAFE_INSTANCE}__seed${SEED_LABEL}.csv"
+
+	# Stop before SLURM stops us. If this run could still be going when the wall arrives, do not
+	# start it: a run cut off by the wall leaves neither a row nor a KILLED line, so it is
+	# indistinguishable from one that was never attempted -- the one outcome the record cannot
+	# represent. Deferring says so out loud, and the line stays in the task list for a rerun,
+	# which --skip-existing will pick up because no row was written.
+	ELAPSED=$(( $(date +%s) - BATCH_START ))
+	if [ $(( ELAPSED + RUN_TIMEOUT + 120 )) -gt "$WALL_SECONDS" ]; then
+		DEFERRED=$((DEFERRED+1))
+		echo "DEFERRED reason=insufficient-wall-clock remaining=$(( WALL_SECONDS - ELAPSED ))s needs=${RUN_TIMEOUT}s line=$LINE_NUMBER algorithm=$ALGORITHM instance=$INSTANCE seed=$SEED_LABEL"
+		continue
+	fi
 
 	# Each run is capped on its own, so one pathological instance cannot eat the batch's
 	# budget and starve the runs queued behind it in this task.
@@ -179,4 +210,7 @@ for (( n=0; n<BATCH; n++ )); do
 	fi
 done
 
-echo "batch finished: $DONE completed, $TIMED_OUT timed out, $OOM out of memory, $FAILED failed"
+echo "batch finished: $DONE completed, $TIMED_OUT timed out, $OOM out of memory, $FAILED failed, $DEFERRED deferred"
+if [ "$DEFERRED" -gt 0 ]; then
+	echo "NOTE: $DEFERRED run(s) deferred for want of wall clock -- raise --time or lower BATCH, then resubmit with --skip-existing"
+fi
