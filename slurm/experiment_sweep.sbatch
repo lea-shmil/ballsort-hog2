@@ -49,6 +49,11 @@
 # 164 GB on 13x3, 216 GB on 6x4, 660 GB on 4x5, 1.4 TB on 3x6, 3.7 TB on 2x8 and 7.2 TB on
 # 7x4. On those, running out of memory is the finding.
 #
+# Nor is memory the binding limit for most killed runs. Once timeouts and OOMs could be told
+# apart, the 1,403 killed runs split 860 / 532, and cleanly by algorithm class: iddfs and
+# idastar-* recorded no OOM at all and ran out of clock, while the closed-list searches account
+# for every OOM. Raising memory buys nothing for the linear-space half of the family.
+#
 # **Each array task runs a batch of consecutive task-list lines**, not just one. That is
 # forced by the cluster's QOS: `cpu-part` allows a user at most 2000 submitted jobs, and every
 # array task counts as one, so an 11,220-run sweep cannot be 11,220 jobs. With BATCH lines per

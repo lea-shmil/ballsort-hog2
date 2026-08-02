@@ -63,13 +63,24 @@ THREADS = {"rscbt-par": PARALLEL_THREADS}
 # schedules promptly and still leaves the node headroom -- both for other jobs and for the
 # search process itself beyond its closed list.
 #
-# What that buys, at the ~150 bytes per state these searches use: 11x3 (8 GB), 2x7 (31 GB)
-# and 12x3 (37 GB) now fit where the previous 32 GB cap was killing them. What it does not
-# buy: 13x3 needs about 164 GB and 6x4 about 216 GB, and beyond those 4x5 needs 660 GB, 3x6
-# 1.4 TB, 2x8 3.7 TB and 7x4 7.2 TB. Exhaustive search on those cells is out of reach on this
-# cluster, so running out of memory is the finding rather than a misconfiguration -- the same
-# thing the paper reports as empty boxes in its Figure 6, and the reason every row records
-# the limit it ran under.
+# What that buys, now measured rather than projected. A relabelling pass over the 1,403 killed
+# runs separated the two causes (860 timeouts, 532 OOMs) and the split falls exactly along
+# algorithm class: the linear-space searches (iddfs, idastar-*) recorded *zero* OOMs and ran out
+# of clock instead, while the closed-list searches account for every OOM.
+#
+# So 60 GB helps far less than a state-count projection suggests, because most of what a
+# projection flags as memory-hungry was never dying of memory:
+#   - 12x3 is the clear win: dijkstra peaked at 31.4 GB on the instances that finished and OOMed
+#     on 20 others, so it sits right on the 32 GB boundary and should clear it at 60 GB.
+#   - 13x3 astar-misplaced peaked at 19.8 GB with 8 OOMs, so those should clear too.
+#   - 13x3 bfs/dijkstra (60 OOMs) need roughly 164 GB and will not.
+#   - 11x3 and 2x7 were pure timeouts with no OOM at all. An earlier note here claimed 60 GB
+#     would rescue them; that conflated projected footprint with observed cause of death, which
+#     was unknowable until the kill reasons were separated.
+# Beyond those, 6x4 needs about 216 GB, 4x5 660 GB, 3x6 1.4 TB, 2x8 3.7 TB and 7x4 7.2 TB.
+# Exhaustive search on those cells is out of reach on this cluster, so running out of memory is
+# the finding rather than a misconfiguration -- the same thing the paper reports as empty boxes
+# in its Figure 6, and the reason every row records the limit it ran under.
 CLOSED_LIST_MEMORY_GB = 60
 DEFAULT_MEMORY_GB = 8
 MEMORY_GB = {

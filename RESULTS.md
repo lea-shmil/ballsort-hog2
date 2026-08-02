@@ -1,129 +1,154 @@
-# Results — triage pass
+# Results: the best-first family on the ball-sort domain
 
-**This is the `--count 2` triage pass, not the reportable run.** Two instances per cell per
-seed over three seeds is six samples per cell; the paper's protocol is ten per cell and the
-full run (`--count 10`, ~9,750 tasks) is what the final numbers should come from. Everything
-below is for shaping that run: which cells each algorithm actually clears, and whether the
-pipeline produces sane numbers. See `README.md` for the benchmark design and provenance.
+Full sweep, 2026-08-02. **11,220 runs attempted, 9,828 completed, 1,392 killed.**
 
-## Setup
+17 algorithms x 22 cells x 10 instances x 3 seeds. Every run single-process on an
+`ise-cpu128-*` node (AMD EPYC 7702P, one CPU model across all 12 nodes, verified per row),
+32 GB and 3600 s per run, wall-clock the median of 3 repeats. See `README.md` for the
+benchmark design and provenance.
 
-| | |
+Reproduce with:
+
+```
+slurm/build_tasklist.py --grid core --seeds 20250726,20250727,20250728
+bash slurm/submit_sweep.sh
+slurm/aggregate_results.py
+```
+
+> **Memory caveat.** This dataset was collected with a flat 32 GB per run. The committed
+> configuration now sizes memory per algorithm (60 GB for the closed-list searches), so a
+> fresh run will *not* reproduce the coverage numbers below exactly -- it should do slightly
+> better on `12x3` and `13x3`. Everything else, including all node counts and solution
+> lengths, is hardware- and limit-independent and reproduces exactly. See
+> "What more memory would buy" below.
+
+## Correctness contract
+
+The point of running seven optimal algorithms on the same instances is that they must agree.
+
+| check | result |
 | --- | --- |
-| Grid | `core` — 22 cells, tiers A–C, the paper's grid ∩ what our `uint64` state hash encodes |
-| Instances | 2 per cell per seed × 3 seeds (`20250726`, `20250727`, `20250728`) = 132 per algorithm |
-| Runs | 1,885 completed of 1,950 attempted; 65 killed on the limit |
-| Limits | 60 min / 32 GB per `(algorithm, instance)`, single-threaded |
-| Hardware | AMD EPYC 7702P, 8 nodes, **one CPU model across every row** (verified from the data) |
-| Wall-clock | median of 3 repeats per run; node counts are deterministic and taken once |
+| instances cross-checked across optimal algorithms | 660 |
+| disagreements on optimal solution length | **0** |
+| weighted-A\* runs violating their `w` bound | **0** |
+| distinct CPU models in the timing data | 1 |
 
-## Correctness
+`rscbt` and `rscbt-par` also expand **byte-identical node counts on all 660 instances**, which
+is the determinism property their contiguous-slice merge was written to guarantee.
 
-The contract from `CLAUDE.md` holds:
+## Coverage: who finishes at all
 
-- **132 instances cross-checked, 0 disagreements** — every optimal algorithm (BFS,
-  bidirectional BFS, frontier BFS, IDDFS, Dijkstra, A\*, IDA\*, and their RSCBT with and
-  without symmetry reduction) returned the same length on every instance it solved.
-- **0 suboptimal-bound violations** — every weighted A\* stayed inside `w × optimal`, and
-  greedy stayed `≥ optimal`.
+The most informative single table. Denominator is 660 attempts (22 cells x 10 x 3 seeds).
 
-That agreement across eleven independently-implemented searches is the evidence that the
-domain, the hash, our heuristic and the ported DFVS bound are all correct.
+| algorithm | solved | coverage | median runtime (s) |
+| --- | ---: | ---: | ---: |
+| `astar-paper` (A\* + DFVS bound) | 660 | **100.0%** | 0.0036 |
+| `rscbt`, `rscbt-nosym`, `rscbt-par` | 660 | **100.0%** | 0.043 / 0.031 / 0.041 |
+| `wastar-1.005 … 1.1`, `greedy` | 660 | **100.0%** | 0.0012 – 0.0047 |
+| `bibfs` | 658 | 99.7% | 0.120 |
+| `idastar-paper` | 655 | 99.2% | 0.0050 |
+| `astar-misplaced` | 636 | 96.4% | 0.098 |
+| `bfs` | 480 | 72.7% | 1.548 |
+| `frontier-bfs` | 467 | 70.8% | 0.998 |
+| `dijkstra` | 459 | 69.5% | 1.783 |
+| `idastar-misplaced` | 375 | 56.8% | 0.195 |
+| `iddfs` | 158 | **23.9%** | 2.077 |
 
-## Median nodes expanded
+## The heuristic is the whole story
 
-`-` means not attempted (tier cap) or every run was killed. Cells are ordered by reachable
-state count `N`.
+On the 636 instances both A\* variants solved:
 
-| cell | tier | `N` | iddfs | bfs | dijkstra | frontier | biBFS | A\*+misp | IDA\*+misp | rscbt-nosym | rscbt | IDA\*+paper | **A\*+paper** |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 4x3 | A | 1e3 | 744k | 586 | 594 | 822 | 142 | 124 | 1722 | 65 | 65 | 14 | **16** |
-| 5x3 | A | 5e3 | 8.9M | 2422 | 2412 | 3512 | 308 | 266 | 28k | 96 | 96 | 18 | **19** |
-| 6x3 | A | 3e4 | 3080M | 17k | 17k | 27k | 1901 | 2196 | 3.4M | 324 | 313 | 68 | **33** |
-| 3x4 | A | 3e4 | 123M | 16k | 18k | 21k | 889 | 620 | 8364 | 198 | 147 | 14 | **19** |
-| 2x5 | A | 4e4 | 8.9M | 21k | 21k | 24k | 734 | 326 | 2091 | 616 | 174 | 22 | **22** |
-| 7x3 | B | 1e5 | – | 96k | 95k | 160k | 7642 | 10k | 79M | 1402 | 1379 | 181 | **85** |
-| 8x3 | B | 6e5 | – | 351k | 353k | 550k | 13k | 18k | 621M | 2438 | 2364 | 124 | **72** |
-| 4x4 | B | 1e6 | – | 993k | 974k | 1.6M | 34k | 46k | 27M | 4128 | 3962 | 1686 | **312** |
-| 2x6 | B | 2e6 | – | 937k | 1.0M | 923k | 7768 | 2070 | 29k | 1036 | 550 | 12 | **14** |
-| 9x3 | B | 3e6 | – | 2.5M | 2.4M | 4.5M | 82k | 229k | – | 8430 | 8406 | 16k | **1450** |
-| 10x3 | B | 1e7 | – | 6.9M | 6.8M | 12M | 156k | 321k | 2938M | 2670 | 2670 | 11k | **266** |
-| 3x5 | B | 1e7 | – | 7.0M | 7.9M | 9.0M | 77k | 26k | 2.7M | 1370 | 1243 | 21 | **22** |
-| 5x4 | B | 4e7 | – | 28M | 28M | 42M | 272k | 291k | 160M | 5248 | 5195 | 3838 | **569** |
-| 11x3 | B | 6e7 | – | 42M | 43M | 74M | 687k | 2.1M | – | 14k | 14k | 81k | **1746** |
-| 2x7 | C | 2e8 | – | – | – | – | – | 7022 | 163k | 1732 | 1070 | 18 | **18** |
-| 12x3 | C | 2e8 | – | – | – | – | – | 4.4M | – | 25k | 25k | 22k | **2180** |
-| 13x3 | C | 1e9 | – | – | – | – | – | 43M | – | 296k | 296k | 24M | **61k** |
-| 6x4 | C | 1e9 | – | – | – | – | – | 2.9M | 229M | 7986 | 7955 | 3048 | **498** |
-| 4x5 | C | 4e9 | – | – | – | – | – | 3.4M | – | 15k | 15k | 5832 | **842** |
-| 3x6 | C | 9e9 | – | – | – | – | – | 3.4M | – | 19k | 19k | 1636 | **422** |
-| 2x8 | C | 2e10 | – | – | – | – | – | 612k | 228M | 49k | 31k | 2238 | **1005** |
-| 7x4 | C | 5e10 | – | – | – | – | – | 31M | – | 99k | 99k | 821k | **6336** |
+| heuristic | median nodes expanded |
+| --- | ---: |
+| misplaced balls (ours) | 61,934 |
+| DFVS bound (the paper's) | **100** |
 
-## What it says
+**619x fewer expansions**, and it moves A\* from 96.4% coverage to 100%. The same swap takes
+IDA\* from 56.8% to 99.2%. Nothing else in this study comes close to that effect size.
 
-**The paper's DFVS bound is the whole story.** A\* with it solved 132/132 and expands three
-to four orders of magnitude fewer nodes than the same search with the misplaced-ball
-heuristic: on `7x4` (N = 5e10) it is 6,336 against 31M — a factor of ~4,900 — and in wall
-clock 0.87s against 200s. On `13x3`, 61k against 43M. Porting it was worth the effort, and
-`astar-paper` should be the reference configuration from here.
+## The paper's own algorithm
 
-**Their algorithm behaves exactly as their §6 predicts.** RSCBT solved every cell, but
-expands consistently more than A\* with the same bound — 99k against 6,336 on `7x4`. That is
-the documented cost of expanding in breadth-first rather than best-first order, which they
-accept in exchange for easy parallelization. Since we run it single-threaded, we pay the cost
-without collecting the benefit, so this is not evidence against their design.
+`rscbt` solves every instance, but as a *search* it is not competitive with best-first on the
+same bound:
 
-**Symmetry reduction cuts nodes but not time.** `rscbt` against `rscbt-nosym`: 174 vs 616 on
-`2x5`, 550 vs 1036 on `2x6`, 31k vs 49k on `2x8` — the saving grows with the color count, as
-expected. But wall-clock is no better (1.63s vs 1.92s on `7x4`, 2.83s vs 2.92s on `13x3`),
-because minimizing over `c!` relabelings per state costs about what it saves.
+| | median nodes expanded |
+| --- | ---: |
+| `astar-paper` | 116 |
+| `rscbt` | 2,687 |
 
-**IDA\* is the wrong linear-space choice here.** With the paper's bound it beats A\* on small
-cells but collapses on large ones — 24M against A\*'s 61k on `13x3`, 821k against 6,336 on
-`7x4`. Few distinct `f` values means many iterations each re-expanding almost everything.
-RSCBT, which is also memory-lean, dominates it on the hard cells.
+That is expected rather than a defect: RSCBT is breadth-first layer-by-layer under an
+ascending `mu` filter, so it does not order by `f` and re-derives work each round. Its value
+is that it is the paper's published method and it parallelizes cleanly.
 
-**Bidirectional BFS is the best uninformed algorithm by two orders of magnitude** (687k
-against 42M on `11x3`), and IDDFS is unusable past tier A, as the tier caps assumed —
-3,080M expansions on `6x3`, a cell BFS finishes in 17k.
+- **Symmetry reduction** (`rscbt` vs `rscbt-nosym`): 2,687 vs 3,072 median expansions, a
+  1.14x cut -- real but modest at these cell sizes.
+- **Parallel speedup** (`rscbt-par`, 16 threads): 0.99x median across all 660 instances,
+  because most finish in milliseconds and thread setup dominates. Restricted to the 121
+  instances with more than 1 s of serial work: **2.82x median, 7.67x max.**
 
-### Suboptimality
+## Suboptimal search
 
-| algorithm | median | mean | max | bound |
-|---|---|---|---|---|
-| `wastar-1.25` | 1.000 | 1.022 | 1.136 | ≤ 1.25 ✓ |
-| `wastar-1.5` | 1.041 | 1.050 | 1.200 | ≤ 1.5 ✓ |
-| `wastar-2` | 1.083 | 1.100 | 1.500 | ≤ 2 ✓ |
-| `wastar-3` | 1.136 | 1.168 | 1.755 | ≤ 3 ✓ |
-| `wastar-5` | 1.143 | 1.230 | 2.154 | ≤ 5 ✓ |
-| `greedy` | 1.242 | 1.431 | 3.423 | none |
+Weighted A\* on this domain barely trades anything, in either direction:
 
-Every weighted run stayed well inside its guarantee — `w = 5` never exceeded 2.15× — so the
-weight sweep buys speed cheaply. `w = 1.25` was optimal on more than half its instances.
+| algorithm | mean ratio | max ratio | optimal on |
+| --- | ---: | ---: | ---: |
+| `wastar-1.005` | 1.0000 | 1.000 | 660/660 (100%) |
+| `wastar-1.01` | 1.0000 | 1.000 | 660/660 (100%) |
+| `wastar-1.05` | 1.0000 | 1.000 | 660/660 (100%) |
+| `wastar-1.1` | 1.0017 | 1.050 | 627/660 (95%) |
+| `greedy` | 1.4160 | 3.423 | 149/660 (23%) |
 
-## Coverage, and how to read it
+Every weighted run stayed inside its `w` bound. But the median expansions tell the real story:
+116 for A\*, 116 at w=1.05, 92 at w=1.1. **Weighting buys essentially nothing here**, because
+the DFVS bound is already tight enough that A\* expands about 100 nodes. Greedy does cut
+expansions 3.74x, at a mean 42% longer solution.
 
-| algorithm | solved / attempted | killed |
-|---|---|---|
-| `astar-paper`, `idastar-paper`, `rscbt`, `rscbt-nosym`, `greedy`, all `wastar-*` | 132/132 | 0 |
-| `bfs`, `bibfs`, `dijkstra`, `frontier-bfs` | 84/84 | 0 |
-| `astar-misplaced` | 128/132 | 4 |
-| `iddfs` | 27/30 | 3 |
-| `idastar-misplaced` | 74/90 | 16 |
+## Why runs died: timeout vs out of memory
 
-**The 100% for the exhaustive algorithms is not what it looks like.** They were only
-*attempted* on tiers A–B (84 = 14 cells × 6), because `build_tasklist.py` caps them there.
-The number says they cleared every cell they were asked about, not that they would survive
-tier C. `iddfs` likewise was only asked about tier A.
+The 1,392 killed runs were re-run to separate the two causes, which an earlier
+`timeout --signal=KILL` had made indistinguishable (both exit 137). The split is
+**860 timeouts / 532 out-of-memory**, and it falls cleanly along algorithm class:
 
-## Next
+| algorithm | timeout | out of memory |
+| --- | ---: | ---: |
+| `iddfs` | 502 | 0 |
+| `idastar-misplaced` | 285 | 0 |
+| `idastar-paper` | 5 | 0 |
+| `frontier-bfs` | 63 | 130 |
+| `dijkstra` | 3 | 198 |
+| `bfs` | 2 | 178 |
+| `astar-misplaced` | 0 | 24 |
+| `bibfs` | 0 | 2 |
 
-- **Re-tune the tier caps from measurement rather than from `N`.** `astar-misplaced` cleared
-  97% of tier C, so capping it at B in the full run would discard real data; `idastar-misplaced`
-  managed only 82% and is the weakest informed configuration.
-- **Consider lifting the caps on the exhaustive algorithms for one or two tier-C cells**, so
-  the claim "they cannot reach tier C" is measured rather than assumed. `12x3` (N = 2e8) is
-  the cheapest place to test it.
-- **Then run `--count 10`** with `--skip-existing`, which reuses these 1,885 rows and runs only
-  the remainder.
+The linear-space searches recorded **zero** OOMs -- exactly as their space complexity predicts --
+while the closed-list searches account for every one. This is the cross-check that the domain's
+memory behaviour is what the theory says.
+
+By cell, OOM appears only on the large-state-count cells (`12x3`, `13x3`, `2x8`, `3x6`, `4x5`,
+`6x4`, `7x4`). Small cells such as `10x3` and `11x3` produced timeouts only.
+
+## What more memory would buy
+
+Measured, not projected. Runs that completed peaked at **31.5 GB against the 32 GB cap**, so
+the boundary was genuinely binding:
+
+- **`12x3` is the clear win.** `dijkstra` peaked at 31.4 GB on instances that finished and
+  OOMed on 20 others -- it sits exactly on the boundary and should clear it at 60 GB.
+- **`13x3` `astar-misplaced`** peaked at 19.8 GB with 8 OOMs; those should clear too.
+- **`13x3` `bfs`/`dijkstra`** (60 OOMs) need roughly 164 GB and will not.
+- Beyond that: `6x4` ~216 GB, `4x5` ~660 GB, `3x6` ~1.4 TB, `2x8` ~3.7 TB, `7x4` ~7.2 TB.
+
+So a 60 GB re-run would recover on the order of 28 runs, not hundreds. The rest is not a
+misconfiguration -- exhaustive search on those cells is out of reach on this cluster, which is
+the same thing the paper reports as empty boxes in its Figure 6. The 60 GB ceiling itself is
+set by contention, not policy: the nodes have 514 GB but run mostly allocated to other users,
+so larger requests are accepted and then pend on Resources indefinitely.
+
+## Reading the outputs
+
+| file | contents |
+| --- | --- |
+| `results/all_runs.csv` | one row per (algorithm, instance, seed), 18 columns |
+| `results/per_cell.csv` | per-cell medians and coverage |
+| `results/contract.txt` | the cross-check report above |
+| `logs/sweep/*.out` | per-run `KILLED reason=…` lines with elapsed time |
