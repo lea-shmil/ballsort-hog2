@@ -433,6 +433,49 @@ bash slurm/submit_sweep.sh                                              # chunke
 slurm/aggregate_results.py                                              # when it finishes
 ```
 
+### Reproducing the published results exactly
+
+The dataset behind `RESULTS.md` is tagged **`results-2026-08-02`**, with HOG2 pinned at
+submodule commit `af9d42d0`. To reproduce it:
+
+```sh
+git clone --recurse-submodules <repo-url> && cd ballsort-hog2
+git checkout results-2026-08-02 && git submodule update --init --recursive
+conda env create -f environment.yml && conda activate ballsort
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j4
+slurm/build_tasklist.py --grid core --seeds 20250726,20250727,20250728
+bash slurm/submit_sweep.sh
+slurm/aggregate_results.py
+```
+
+**What reproduces bit-for-bit, on any machine.** Solution lengths, nodes expanded, nodes
+generated, iteration counts and root lower bounds. Every algorithm here is deterministic, and
+instances are a pure function of `(seed, height, tubes, index)` — instance files need not even
+be transferred, only regenerated. `rscbt-par` is deterministic *in its thread count too*: it
+slices each layer contiguously and merges in slice order, so it expands the same nodes at 1
+thread as at 16.
+
+**What reproduces only approximately.** Wall-clock, and therefore anything derived from it.
+Pin the CPU (`--constraint=cpu128`, all AMD EPYC 7702P) and the toolchain (`environment.yml`,
+gcc 15.2.0) as above; every row still records `node` and `cpu_model` so residual heterogeneity
+is visible rather than assumed away, and `aggregate_results.py` warns if rows span more than
+one model.
+
+**What will differ from the published numbers, deliberately.** Coverage. The dataset was
+collected with a flat 32 GB per run; the committed configuration now sizes memory per
+algorithm (60 GB for the closed-list searches). A fresh run should therefore solve *slightly
+more* than `RESULTS.md` reports — on the order of 28 runs, in `12x3` and `13x3`. This is
+recorded rather than silently folded in.
+
+**One caveat that matters for reported coverage.** `run_experiment` executes each search
+`--timing-repeats` times (default 3) and reports the **median**, while `timeout(1)` caps the
+*whole process*. At the 3600 s limit used here, the effective budget per search is therefore
+about **1200 s, not 3600 s**. It shows as a hard edge in the data: no completed run in the
+sweep reports more than 1252.9 s, and there are zero completions between there and the nominal
+limit. Coverage figures for the time-bound algorithms (`iddfs`, `idastar-misplaced`) are
+understated accordingly. To get the nominal budget, pass `--timing-repeats 1`, or raise
+`RUN_TIMEOUT` to three times the intended per-search limit.
+
 ### Email notification (optional, per account)
 
 To be emailed when the arrays finish:
@@ -467,17 +510,24 @@ Belt and braces: every row also records `node` and `cpu_model`, and
 `aggregate_results.py` warns if the rows span more than one CPU model. So the pinning is
 checkable from the data rather than trusted.
 
-One array task is one `(algorithm, instance)` pair at **60 min / 32 GB, single-threaded**.
-One pair per task is the design: tasks are independent, a task over either limit is killed by
-SLURM without touching the rest, and a killed task is a *result* — a timeout, which is what
-the paper's empty Figure 6 boxes are — rather than a lost run. Rows land one file per task in
+Each run is one `(algorithm, instance)` pair at **60 min**, and a run over either limit is
+killed by SLURM as a *result* — a timeout or an exhausted memory budget, which is what the
+paper's empty Figure 6 boxes are — rather than a lost run. Rows land one file per run in
 `results/rows/`, because hundreds of concurrent tasks appending to one CSV would interleave.
 
-By default the task list skips `(algorithm, cell)` pairs whose outcome is already known from
-the tiers — `iddfs` above tier A, the exhaustive algorithms above tier B — since a 60-minute
-timeout is expensive to buy thousands of times over. Every skip is written into the task list
-as a comment, so "not attempted" stays distinguishable from missing data; `--all` attempts
-everything.
+Runs are **batched**, twelve to an array task, because the `cpu-part` QOS allows a user only
+2000 submitted jobs and the sweep is 11,220 runs. Each run inside a batch still gets its own
+`timeout(1)`, so batching does not weaken the per-run limits.
+
+**Memory is per algorithm**, not one figure for the sweep: 60 GB for the closed-list searches
+(`bfs`, `bibfs`, `dijkstra`, `frontier-bfs`, `astar-*`), 8 GB for everything else, which was
+measured rather than guessed. `submit_sweep.sh` submits one array per `(threads, memory)`
+profile. Only `rscbt-par` asks for more than one core (16).
+
+**All algorithms are attempted on all tiers.** `MAX_TIER` in `build_tasklist.py` is empty; a
+cap would mean the reach of an algorithm was assumed rather than measured. Any cap that is
+reinstated is written into the task list as a comment, so "not attempted" stays
+distinguishable from missing data.
 
 `aggregate_results.py` checks the correctness contract from `CLAUDE.md`: every optimal
 algorithm must return the same length on every instance, weighted A\* must stay inside

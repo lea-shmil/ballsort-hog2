@@ -1,8 +1,19 @@
+# Toolchain for ballsort-hog2. This cluster has no system g++ or cmake and no gcc/cmake
+# environment modules, so conda is where the compiler comes from.
+#
+#   conda env create -f environment.yml
+#   conda activate ballsort
+#
+# Versions are pinned to what produced the dataset in RESULTS.md. Node counts and solution
+# lengths are compiler-independent and reproduce under any toolchain, but wall-clock is one of
+# the reported metrics, and a different gcc inlines and vectorises differently. Anyone
+# reproducing the *timings* wants these exact versions; anyone reproducing the *search
+# behaviour* can safely relax them.
 name: ballsort
 channels:
   - conda-forge
   - defaults
 dependencies:
-  - cmake
-  - gxx_linux-64
-  - make
+  - cmake=4.4.0
+  - gxx_linux-64=15.2.0
+  - make=4.4.1

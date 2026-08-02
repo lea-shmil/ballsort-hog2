@@ -21,6 +21,16 @@ slurm/aggregate_results.py
 > better on `12x3` and `13x3`. Everything else, including all node counts and solution
 > lengths, is hardware- and limit-independent and reproduces exactly. See
 > "What more memory would buy" below.
+>
+> **Timing-budget caveat -- read before quoting coverage.** Each run executes the search 3
+> times and reports the median wall-clock, while `timeout(1)` caps the whole process at
+> 3600 s. The effective budget per search is therefore about **1200 s, not 3600 s**. The
+> ceiling is visible in the data: the slowest completed run in the sweep is 1252.9 s and there
+> are **zero** completions between there and 3600 s. Coverage for the two time-bound
+> algorithms (`iddfs` 23.9%, `idastar-misplaced` 56.8%) is understated by this margin and
+> should be quoted as "solved within ~1200 s of search", not 3600 s. Node counts, solution
+> lengths and the correctness contract are unaffected. `--timing-repeats 1` gives the nominal
+> budget.
 
 ## Correctness contract
 
