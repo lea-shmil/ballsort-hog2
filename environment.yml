@@ -17,3 +17,7 @@ dependencies:
   - cmake=4.4.0
   - gxx_linux-64=15.2.0
   - make=4.4.1
+  # Only slurm/plot_results.py needs this, and only after a sweep has finished. The
+  # rest of the pipeline -- generation, the runs, aggregation -- is C++ plus the
+  # Python standard library, so nothing else in the repo imports it.
+  - matplotlib-base=3.10.7
