@@ -508,8 +508,10 @@ factor examined in this study produces an effect of comparable size, which
 indicates that heuristic quality, not the choice of search order, is the
 dominant determinant of search efficiency on this domain.
 Figure~\ref{fig:expansions} shows how that difference behaves as the state
-space grows: expansions under $h_{DFVS}$ are almost independent of $N$ across
-the whole core grid, while the uninformed searches track $N$ directly.
+space grows: across the whole core grid the searches guided by $h_{DFVS}$
+grow markedly more slowly than $N$, while the uninformed searches track it
+directly, so the gap between the two heuristics widens with cell size rather
+than staying at the constant factor a single median suggests.
 % [FIX 7] The 100 versus 116 difference is now stated explicitly rather than
 % left for the reader to reconcile across tables.
 The expansion medians in Table~\ref{tab:heuristic} are taken over the 636
@@ -542,9 +544,12 @@ DFVS bound ($h_{DFVS}$) & 100 & 100.0\% & 99.2\% \\
 \includegraphics[width=\textwidth]{figures/fig_expansions_vs_states}
 \caption{Median nodes expanded against the exact reachable configuration count
 $N$, over the 22 core cells, for one representative algorithm per class. Both
-axes are logarithmic. The searches guided by $h_{DFVS}$ stay nearly flat while
-$N$ grows by seven orders of magnitude, whereas the uninformed searches climb
-with $N$ and stop at the cell where their budget runs out. Line segments join
+axes are logarithmic. Over the seven orders of magnitude of $N$ the grid spans,
+the searches guided by $h_{DFVS}$ grow by two to three, and greedy best-first
+search by about one, while breadth-first search grows roughly in proportion to
+$N$, as an exhaustive search must, and iterative deepening faster still. The
+uninformed series also stop early, at the cell where their budget runs out.
+Line segments join
 cells that share a tube count, within which raising the height raises $N$ and
 the cost together; cells with different tube counts are not joined, since two
 cells of similar $N$ but different shape are not comparable. Hollow markers mark
