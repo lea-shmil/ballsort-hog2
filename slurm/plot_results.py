@@ -268,12 +268,13 @@ def figure_coverage(cells, kills, have_logs, outdir, formats):
 
     order = sorted(solved, key=lambda a: (solved[a] / max(attempted[a], 1), solved[a]))
 
-    fig, ax = plt.subplots(figsize=(AAAI_COL, 0.20 * len(order) + 1.0))
+    fig, ax = plt.subplots(figsize=(AAAI_COL, 0.20 * len(order) + 1.35))
     ax.grid(True, axis="x", linewidth=0.5, color=GRID, zorder=0)
     ax.set_axisbelow(True)
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
 
+    bar_ends = []
     for i, algorithm in enumerate(order):
         killed = attempted[algorithm] - solved[algorithm]
         if have_logs:
@@ -296,18 +297,29 @@ def figure_coverage(cells, kills, have_logs, outdir, formats):
                     edgecolor=SURFACE, linewidth=0.8, zorder=3)
             left += value
 
-        ax.text(attempted[algorithm] + 8, i, f"{solved[algorithm]}",
+        # Anchor the count to where the bar actually ends, not to attempted[]. per_cell.csv
+        # omits a cell entirely when an algorithm solved nothing in it, so attempted[] runs
+        # short of the real 660 for exactly the algorithms with the most kills (bfs 510,
+        # dijkstra 510, frontier-bfs 540, idastar-misplaced 540, iddfs 300) -- which put
+        # their labels inside their own bars, in muted grey on saturated fill.
+        bar_ends.append(left)
+        ax.text(left + 8, i, f"{solved[algorithm]}",
                 va="center", ha="left", fontsize=6.5, color=INK_MUTED)
 
     ax.set_yticks(range(len(order)))
     ax.set_yticklabels(order, fontsize=6.5)
     ax.tick_params(axis="y", length=0)
     ax.set_xlabel("runs (of 660 core instances)")
-    ax.set_xlim(0, max(attempted.values(), default=660) * 1.10)
+    ax.set_xlim(0, max(bar_ends, default=660) * 1.10)
 
+    # Below the axes, not "lower right": every bar runs the full 660, so there is no
+    # in-panel whitespace for a legend to sit in -- it landed on top of the iddfs and
+    # idastar-misplaced bars.
     labels = OUTCOME if have_logs else [OUTCOME[0], ("killed", "killed", SLOT[1])]
     ax.legend(handles=[Patch(facecolor=c, label=lab) for _, lab, c in labels],
-              loc="lower right", frameon=False, fontsize=6.5)
+              loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=3,
+              frameon=False, fontsize=6.5, handlelength=1.4,
+              columnspacing=1.2, handletextpad=0.5)
 
     if not have_logs:
         print("warning: no sweep logs found, so timeouts and OOM kills could not be "
@@ -385,6 +397,9 @@ def main():
                     help="comma-separated output formats (default pdf,png)")
     ap.add_argument("--no-numbers", action="store_true",
                     help="skip the per-algorithm number report")
+    ap.add_argument("--numbers", action="store_true",
+                    help="print the per-algorithm number report (the default; accepted "
+                         "so the documented invocation works as written)")
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)

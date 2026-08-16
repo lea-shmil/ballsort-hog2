@@ -50,7 +50,7 @@ ALGORITHMS = [
 PARALLEL_THREADS = 16
 THREADS = {"rscbt-par": PARALLEL_THREADS}
 
-# Memory per algorithm, in GB. Measured, not guessed: over 9,817 runs the algorithms that
+# Memory per algorithm, in GB. Measured, not guessed: over 9,828 runs the algorithms that
 # keep a closed list peaked at 15-32 GB, while every other algorithm in the set -- the
 # informed searches, rscbt, the weight sweep, iddfs -- stayed under 0.5 GB. Giving all of
 # them the same large allocation would cut concurrency by an order of magnitude to no
@@ -63,7 +63,7 @@ THREADS = {"rscbt-par": PARALLEL_THREADS}
 # schedules promptly and still leaves the node headroom -- both for other jobs and for the
 # search process itself beyond its closed list.
 #
-# What that buys, now measured rather than projected. A relabelling pass over the 1,403 killed
+# What that buys, now measured rather than projected. A relabelling pass over the 1,392 killed
 # runs separated the two causes (860 timeouts, 532 OOMs) and the split falls exactly along
 # algorithm class: the linear-space searches (iddfs, idastar-*) recorded *zero* OOMs and ran out
 # of clock instead, while the closed-list searches account for every OOM.
