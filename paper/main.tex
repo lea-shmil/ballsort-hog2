@@ -544,7 +544,10 @@ DFVS bound ($h_{DFVS}$) & 100 & 100.0\% & 99.2\% \\
 $N$, over the 22 core cells, for one representative algorithm per class. Both
 axes are logarithmic. The searches guided by $h_{DFVS}$ stay nearly flat while
 $N$ grows by seven orders of magnitude, whereas the uninformed searches climb
-with $N$ and stop at the cell where their budget runs out. Hollow markers mark
+with $N$ and stop at the cell where their budget runs out. Line segments join
+cells that share a tube count, within which raising the height raises $N$ and
+the cost together; cells with different tube counts are not joined, since two
+cells of similar $N$ but different shape are not comparable. Hollow markers mark
 cells the algorithm did not solve completely, where the median is taken over the
 solved instances only and therefore understates the true cost of the cell.}
 \label{fig:expansions}

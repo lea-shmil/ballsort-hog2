@@ -107,7 +107,7 @@ plt.rcParams.update({
     "axes.facecolor":    SURFACE,
     "savefig.facecolor": SURFACE,
     "savefig.bbox":      "tight",
-    "savefig.pad_inches": 0.02,
+    "savefig.pad_inches": 0.06,   # 0.02 shaved the first character off the longest y labels
     "pdf.fonttype":      42,    # embed TrueType, not Type 3: many venues reject Type 3
     "ps.fonttype":       42,
 })
@@ -191,15 +191,27 @@ def load_kill_reasons(logdir):
 
 def figure_expansions(cells, outdir, formats):
     """Median nodes expanded against N, log-log, one line per representative algorithm."""
-    # cell -> N, and the per-(algorithm, cell) medians
-    by_algorithm = defaultdict(list)
+    # (algorithm, colors) -> the per-cell medians for that tube-count family.
+    #
+    # Keyed on the color count, not just the algorithm, because a line across the whole
+    # grid would be false continuity. Ordering all 22 cells by N interleaves families
+    # that behave nothing alike -- 2 colors at height 13 and 7 colors at height 2 land
+    # at comparable N but not at comparable difficulty -- and connecting across the
+    # boundary drew a sawtooth that is an artifact of the sort order rather than
+    # anything in the data. Within one family, raising h raises both N and the cost
+    # monotonically, so a line there means what a line should mean.
+    by_series = defaultdict(list)
     for row in cells:
         expanded = to_float(row["median_nodes_expanded"])
         if expanded is None or expanded <= 0:
             continue        # nothing solved in this cell, so there is no median to plot
         n = reachable_state_count(int(row["colors"]), int(row["height"]))
         coverage = to_float(row["coverage"])
-        by_algorithm[row["algorithm"]].append((n, expanded, coverage))
+        by_series[(row["algorithm"], int(row["colors"]))].append((n, expanded, coverage))
+
+    by_algorithm = defaultdict(list)
+    for (algorithm, _colors), points in by_series.items():
+        by_algorithm[algorithm].extend(points)
 
     fig, ax = plt.subplots(figsize=(AAAI_FULL, 2.9))
     ax.set_xscale("log")
@@ -209,21 +221,25 @@ def figure_expansions(cells, outdir, formats):
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
 
+    families = sorted({colors for _algorithm, colors in by_series})
+
     plotted = 0
     for name, label, color, marker in FIG1_SERIES:
-        points = sorted(by_algorithm.get(name, []))
-        if not points:
+        if not by_algorithm.get(name):
             print(f"warning: no data for {name}; omitted from figure 1", file=sys.stderr)
             continue
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
-        ax.plot(xs, ys, color=color, linewidth=1.4, zorder=3,
-                solid_capstyle="round", label=label)
+        # One polyline per tube-count family, all in the algorithm's own hue, so the
+        # six colors still read as six algorithms while no line crosses a family break.
+        for colors in families:
+            points = sorted(by_series.get((name, colors), []))
+            if len(points) > 1:
+                ax.plot([p[0] for p in points], [p[1] for p in points],
+                        color=color, linewidth=1.4, zorder=3, solid_capstyle="round")
         # Filled marker where the algorithm solved the whole cell; hollow where it did
         # not. A median over survivors only is a biased estimate of that cell's cost,
         # and the hollow marker is what stops the tail of each line being read as if it
         # were comparable to the filled part.
-        for x, y, coverage in points:
+        for x, y, coverage in sorted(by_algorithm[name]):
             full = coverage is not None and coverage >= 0.999
             ax.plot(x, y, marker=marker, markersize=4.0, zorder=4,
                     color=color,
