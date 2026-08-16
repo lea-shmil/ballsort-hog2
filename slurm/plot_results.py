@@ -382,6 +382,15 @@ def report_numbers(rows, cells):
     def med(values):
         return statistics.median(values) if values else float("nan")
 
+    # .10g, not .0f. Every cell in the sweep has an even number of runs (30 per cell,
+    # 660 per algorithm), so a median is the mean of the two central values and can
+    # legitimately land on a half -- wastar-1.1 really is 91.5. Rounding that to an
+    # integer in a report whose whole purpose is to be transcribed into the paper is
+    # how a wrong number gets published; .10g keeps the half and still prints the
+    # large counts in full rather than switching to scientific notation.
+    def num(value):
+        return f"{value:.10g}"
+
     print()
     print("Per-algorithm medians (fill these into the paper rather than inferring):")
     print(f"{'algorithm':<20} {'runtime pooled':>14} {'runtime by cell':>16} "
@@ -389,15 +398,8 @@ def report_numbers(rows, cells):
     for algorithm in sorted(pooled_runtime):
         print(f"{algorithm:<20} {med(pooled_runtime[algorithm]):>14.4f} "
               f"{med(cell_runtime[algorithm]):>16.4f} "
-              f"{med(pooled_expanded[algorithm]):>16.0f} "
-              f"{med(cell_expanded[algorithm]):>17.0f}")
-    print()
-    print("The two the paper currently infers rather than measures:")
-    print(f"  greedy median runtime        = {med(pooled_runtime['greedy']):.4f} s "
-          f"(pooled) / {med(cell_runtime['greedy']):.4f} s (by cell)")
-    for w in ("wastar-1.005", "wastar-1.01"):
-        print(f"  {w} median expanded  = {med(pooled_expanded[w]):.0f} (pooled) / "
-              f"{med(cell_expanded[w]):.0f} (by cell)")
+              f"{num(med(pooled_expanded[algorithm])):>16} "
+              f"{num(med(cell_expanded[algorithm])):>17}")
 
 
 def main():

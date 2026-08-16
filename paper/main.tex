@@ -609,7 +609,8 @@ only about 116 nodes per instance on median, weighted A* at small weights
 ($w \le 1.05$) returns the optimal solution on every instance
 and reduces expansions negligibly; only at $w = 1.1$ does the count of
 optimal solutions drop to 627/660 (95\%), with a mean suboptimality ratio
-of 1.0017 and expansions falling to a median of 92. Greedy best-first
+of 1.0017 and expansions falling to a median of 91.5, the one median here
+that is not a whole number because 660 is even. Greedy best-first
 search, the $w \to \infty$ end of the family, cuts median expansions to 31
 (a factor of 3.74 relative to A*) but returns the optimal solution on
 only 149/660 instances (23\%), with a mean suboptimality ratio of 1.416
@@ -630,7 +631,7 @@ Algorithm & Mean ratio & Max ratio & Optimal found & Med. expanded \\
 \texttt{wastar-1.005} & 1.0000 & 1.000 & 660/660 (100\%) & 116 \\
 \texttt{wastar-1.01} & 1.0000 & 1.000 & 660/660 (100\%) & 116 \\
 \texttt{wastar-1.05} & 1.0000 & 1.000 & 660/660 (100\%) & 116 \\
-\texttt{wastar-1.1} & 1.0017 & 1.050 & 627/660 (95\%) & 92 \\
+\texttt{wastar-1.1} & 1.0017 & 1.050 & 627/660 (95\%) & 91.5 \\
 \texttt{greedy} ($w=\infty$) & 1.4160 & 3.423 & 149/660 (23\%) & 31 \\
 \hline
 \end{tabular}

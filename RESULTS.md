@@ -109,7 +109,7 @@ Weighted A\* on this domain barely trades anything, in either direction:
 | `greedy` | 1.4160 | 3.423 | 149/660 (23%) |
 
 Every weighted run stayed inside its `w` bound. But the median expansions tell the real story:
-116 for A\*, 116 at w=1.05, 92 at w=1.1. **Weighting buys essentially nothing here**, because
+116 for A\*, 116 at w=1.005 and w=1.01, 116 at w=1.05, 91.5 at w=1.1. **Weighting buys essentially nothing here**, because
 the DFVS bound is already tight enough that A\* expands about 100 nodes. Greedy does cut
 expansions 3.74x, at a mean 42% longer solution.
 
