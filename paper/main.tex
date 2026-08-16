@@ -27,13 +27,17 @@
 \nocopyright
 
 \pdfinfo{
-/Title (Evaluating BFS Algorithms on Colored Balls in Colored Tubes)
+/Title (Evaluating Best-First Search Algorithms on Colored Balls in Colored Tubes)
 /Author (Lea Galuk, Shahaf Harari)
 }
 
 \setcounter{secnumdepth}{0}
 
-\title{Evaluating BFS Algorithms on Colored Balls in Colored Tubes \\[4pt]
+% [FIX 14] Retitled. "BFS" in the title collided with breadth-first search, which
+% is one of the seventeen configurations evaluated. BFS now abbreviates best-first
+% search only, and is spelled out here so the title carries no ambiguity; the
+% breadth-first configuration is named \texttt{bfs}.
+\title{Evaluating Best-First Search Algorithms on Colored Balls in Colored Tubes \\[4pt]
 \large Search in Artificial Intelligence 26}
 
 \author{
@@ -113,9 +117,13 @@ for the problem.
 The objective of this work is therefore to implement and empirically
 evaluate a broad family of classical single-agent search algorithms on the
 colored-balls-in-colored-tubes formulation of Althaus et al.\
-\cite{althaus2025}. The organizing template is best-first search, in which
-a node is repeatedly selected for expansion from the search frontier
+\cite{althaus2025}. The organizing template is best-first search (BFS), in
+which a node is repeatedly selected for expansion from the search frontier
 according to an evaluation function $f(n)$ \cite{pearl1984,russell2020}.
+Throughout this paper BFS abbreviates best-first search and nothing else.
+Breadth-first search is a distinct algorithm, one of the seventeen
+configurations evaluated below; it is written out in full wherever it appears
+in prose, and the configuration itself is named \texttt{bfs}.
 % [FIX 14] The family is no longer described as uniformly best-first: IDDFS,
 % IDA* and the base paper's Algorithm 1 are not best-first algorithms, and the
 % Results section says as much about Algorithm 1.
