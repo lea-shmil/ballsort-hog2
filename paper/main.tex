@@ -229,12 +229,20 @@ stacks. Ito et al.\ \cite{ito2023} formalize both the ball-sort and
 water-sort puzzles, prove that the two puzzle families are equivalent from
 the viewpoint of solvability, show that a solution (when one exists)
 always has polynomial length (placing the puzzle in NP), and establish
-NP-completeness of finding a solution; they also identify special cases
-solvable in polynomial time.
-% [FIX 11] The draft attributed two specific restrictions to Ito et al. ("even
-% when restricted to two colors" and "bins of capacity two") that the published
-% abstract does not state. Both removed. If they appear in the paper body,
-% reinstate them with the theorem number.
+NP-completeness of finding a solution even when only two colors are involved
+(their Theorem 9). They also identify polynomial-time solvable special cases,
+notably instances in which every tube has capacity two, where a shortest
+sorting sequence can be found in linear time (their Theorems 13 and 14). The
+two-color hardness result is worth stating precisely here, because it rules out
+any hope that a small palette makes the problem easy: the difficulty of this
+puzzle family comes from the stacking discipline and the scarcity of free
+space, not from the number of colors.
+% [FIX 11] Both restrictions verified against the paper body and restored with
+% their theorem numbers. An earlier revision of this file removed them on the
+% grounds that the published abstract does not state either one; that was
+% over-cautious, since the abstract only says "NP-complete" and "for some
+% special cases, we give polynomial-time algorithms" while Theorem 9 and
+% Theorems 13-14 give exactly the restrictions the original text claimed.
 Ruangwises \cite{ruangwises2023} builds on the same puzzle
 definition to design a physical zero-knowledge proof protocol for the ball
 sort puzzle, demonstrating that its state space is combinatorially rich
