@@ -19,7 +19,13 @@
 \usepackage{graphicx}
 \usepackage{amsmath}
 \usepackage{amssymb}
-\usepackage{url}
+% hyperref rather than url, so the repository link is clickable in the PDF.
+% Loaded last, which is what hyperref wants, and with hidelinks so the anchor
+% gets no colored box in print. It supersedes the url package and still
+% provides \url. If a venue's style files reject hyperref, reverting this one
+% line to \usepackage{url} degrades gracefully: the link still typesets, it
+% just stops being clickable.
+\usepackage[hidelinks]{hyperref}
 \frenchspacing
 \setlength{\pdfpagewidth}{8.5in}
 \setlength{\pdfpageheight}{11in}
@@ -140,13 +146,10 @@ optimality, runtime, and state-space growth, across instances of varying
 size and difficulty, so that the resulting analysis can serve as a baseline
 against which future search-based approaches to this puzzle can be
 compared.
-% [FIX 12] Code link filled in (was a TODO in the draft).
-The domain implementation, every algorithm compared here, the instance
-generator, and the scripts that ran the sweep and produced every number in
-this paper are available at
-\url{https://github.com/lea-shmil/ballsort-hog2}, tagged
-\texttt{results-2026-08-02}. The Code and Data Availability section below
-maps each result to the file that produced it.
+% [FIX 12] One-line pointer to the repository. The build instructions, the file
+% map and the reproducibility notes live in the repository's README, not here.
+Our code and results can be found at
+\url{https://github.com/lea-shmil/ballsort-hog2}.
 
 % =========================================================================
 \section{Related Work}
@@ -690,83 +693,6 @@ Closed list & \texttt{frontier-bfs} & 63 & 130 \\
 \hline
 \end{tabular}
 \end{table}
-
-% =========================================================================
-% [FIX 12] New section: concrete pointer to the code behind every number.
-\section{Code and Data Availability}
-
-Everything reported here is reproducible from
-\url{https://github.com/lea-shmil/ballsort-hog2}. The dataset behind
-Tables~\ref{tab:coverage} to~\ref{tab:failure} is tagged
-\texttt{results-2026-08-02}, with HOG2 (\url{https://github.com/MovingAILab/hog2},
-branch \texttt{PDB-refactor}) vendored as a submodule and pinned at commit
-\texttt{af9d42d0}. Table~\ref{tab:artifacts} maps each component of the
-study to the file that implements it.
-
-\begin{table}[t]
-\centering
-\footnotesize
-\caption{Where each part of this study lives in the repository.}
-\label{tab:artifacts}
-\begin{tabular}{p{3.1cm}p{4.3cm}}
-\hline
-Component & File \\
-\hline
-Domain: state, moves, goal test, perfect hash, $h_{mis}$ &
-\texttt{environments/BallSort.h} \\
-$h_{DFVS}$ and its exact minimum-DFVS solver &
-\texttt{include/dfvs\_bound.h}, \texttt{include/dfvs\_exact.h} \\
-Frontier search and IDDFS (our implementations) &
-\texttt{include/frontier\_bfs.h}, \texttt{include/iddfs.h} \\
-Algorithm 1 of Althaus et al. &
-\texttt{include/rscbt.h} \\
-Instance generation, grid, difficulty tiers &
-\texttt{include/instance\_gen.h}, \texttt{src/generate\_instances.cpp} \\
-One algorithm-instance run, one CSV row &
-\texttt{src/run\_experiment.cpp} \\
-Domain, hash and heuristic verification &
-\texttt{src/main.cpp}, \texttt{src/test\_dfvs.cpp} \\
-Sweep construction and submission &
-\texttt{slurm/build\_tasklist.py}, \texttt{slurm/submit\_sweep.sh},
-\texttt{slurm/experiment\_sweep.sbatch} \\
-Aggregation and the correctness contract &
-\texttt{slurm/aggregate\_results.py} \\
-Figures~\ref{fig:coverage} and~\ref{fig:expansions} &
-\texttt{slurm/plot\_results.py} \\
-\hline
-\end{tabular}
-\end{table}
-
-Three commands regenerate the instance set, run the sweep, and produce the
-results:
-
-{\small
-\begin{verbatim}
-slurm/build_tasklist.py --grid core \
-    --seeds 20250726,20250727,20250728
-bash slurm/submit_sweep.sh
-slurm/aggregate_results.py
-\end{verbatim}
-}
-
-\noindent
-The last step writes \texttt{results/all\_runs.csv} (one row per algorithm,
-instance and seed, with all recorded metrics),
-\texttt{results/per\_cell.csv} (the per-cell medians and coverage), and
-\texttt{results/contract.txt} (the correctness cross-check reported above);
-it exits non-zero if any part of the contract fails. Every number in
-Tables~\ref{tab:coverage} to~\ref{tab:failure} is derived from those two
-CSV files.
-
-Instance files are not distributed, because each is a deterministic
-function of the tuple of seed, height, tube count and index, and is
-regenerated rather than transferred. Solution lengths, nodes expanded,
-nodes generated, iteration counts and root bounds reproduce bit-for-bit on
-any machine, since every algorithm evaluated here is deterministic and
-\texttt{rscbt-par} is deterministic in its thread count as well. Wall-clock
-runtime, and anything derived from it, reproduces only approximately; each
-row records the node and CPU model it ran on so that residual heterogeneity
-is visible in the data rather than assumed away.
 
 % =========================================================================
 \section{Conclusions}
